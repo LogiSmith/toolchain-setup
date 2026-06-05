@@ -179,8 +179,11 @@ fi
 
 step "5b. F4PGA architecture definitions (Artix-7)"
 marker="$F4PGA_INSTALL_DIR/$FPGA_FAM/.installed-$F4PGA_HASH"
-if [ -f "$marker" ]; then
-  skip "arch defs already installed ($F4PGA_HASH)"
+# Skip if our marker exists, OR if arch defs are already extracted on disk
+# (e.g. installed manually / from an exported image) — then write the marker.
+if [ -f "$marker" ] || [ -d "$F4PGA_INSTALL_DIR/$FPGA_FAM/share" ]; then
+  touch "$marker" 2>/dev/null || true
+  skip "arch defs already installed (found $F4PGA_INSTALL_DIR/$FPGA_FAM/share)"
 else
   mkdir -p "$F4PGA_INSTALL_DIR/$FPGA_FAM"
   base="https://storage.googleapis.com/symbiflow-arch-defs/artifacts/prod/foss-fpga-tools/symbiflow-arch-defs/continuous/install/${F4PGA_TIMESTAMP}"
