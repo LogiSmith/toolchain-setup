@@ -285,5 +285,10 @@ else
   skip "integration test (--no-test)"
 fi
 
-step "Done"
+echo
+if [ "$DO_TEST" -eq 1 ]; then
+  echo "${G}${B}✓ Toolchain installed and all tests passed${N}"
+else
+  echo "${G}${B}✓ Toolchain installed${N}${G} (integration test skipped)${N}"
+fi
 echo "Open a new shell (or 'source ~/.bashrc') so the 'anvil' alias and conda are active."
