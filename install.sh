@@ -23,6 +23,9 @@
 #
 set -euo pipefail
 
+# Non-interactive apt: avoid needrestart/config prompts stalling under `curl | bash`.
+export DEBIAN_FRONTEND=noninteractive
+
 # ─── Pinned versions ────────────────────────────────────────────────────────
 # This block is the toolchain "lockfile": the component versions that are tested
 # to work together. See VERSIONS.md for the history of tested combinations.
@@ -186,13 +189,18 @@ if [ ! -d "$F4PGA_EXAMPLES/.git" ]; then
 else
   skip "f4pga-examples already at $F4PGA_EXAMPLES"
 fi
+# Accept Anaconda channel Terms of Service non-interactively. Without this, conda
+# prompts on stdin during solving — which under `curl | bash` IS the installer
+# script, so conda consumes the rest of it and the run silently stops.
+conda tos accept --channel https://repo.anaconda.com/pkgs/main \
+                 --channel https://repo.anaconda.com/pkgs/r >/dev/null 2>&1 || true
 if conda env list | grep -qE "^xc7\s|/envs/xc7$"; then
   skip "conda env 'xc7' already exists"
 else
   envyml="$F4PGA_EXAMPLES/environment.yml"
   [ -f "$envyml" ] || envyml="$F4PGA_EXAMPLES/xc7/environment.yml"
   [ -f "$envyml" ] || die "environment.yml not found in f4pga-examples"
-  conda env create -f "$envyml"
+  conda env create -f "$envyml" < /dev/null   # < /dev/null: extra guard so conda can't eat the script
   ok "created conda env 'xc7'"
 fi
 
