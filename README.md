@@ -6,7 +6,9 @@ One-shot installer for the **LogiSmith open-source FPGA toolchain** on Ubuntu
 (native or WSL2). It automates the [manual installation guide](https://logismith.github.io/Docs/installation/ubuntu/)
 and verifies the result with an end-to-end build.
 
-> Currently **Ubuntu only**. WSL2 USB/board setup and Docker are out of scope for now.
+> Currently **Ubuntu only** and **Xilinx (xc7) only**. This script is a stopgap —
+> the plan is to migrate to Nix, and to generalise beyond Xilinx. See
+> [DECISIONS.md](DECISIONS.md).
 
 ## What it installs
 
