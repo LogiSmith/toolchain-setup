@@ -148,6 +148,17 @@ check_tools() {
   ok "required tools present (${RUNTIME_TOOLS})"
 }
 
+# ─── Cleanup (single EXIT handler) ──────────────────────────────────────────
+# One place to tear everything down, so individual steps don't fight over the
+# EXIT trap. Runs on normal exit, on die(), and on an ERR-trap exit.
+SUDO_KEEPALIVE_PID=""
+TESTDIR=""
+cleanup() {
+  [ -n "$SUDO_KEEPALIVE_PID" ] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+  [ -n "$TESTDIR" ] && rm -rf "$TESTDIR" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 # ─── Preflight ──────────────────────────────────────────────────────────────
 step "Preflight checks"
 [ "$(uname -s)" = "Linux" ] || die "This installer targets Linux (Ubuntu)."
@@ -160,6 +171,17 @@ command -v sudo >/dev/null || die "sudo is required."
 ok "Linux / user / sudo present"
 # With --skip-apt nothing gets installed, so all runtime tools must already exist.
 [ "$DO_APT" -eq 1 ] || check_tools
+
+# Cache sudo credentials up front (clear early failure if the user can't sudo),
+# then keep them warm in the background so a long install never re-prompts mid-run.
+NEED_SUDO=0
+if [ "$DO_APT" -eq 1 ] || [ "$DO_BOARD" -eq 1 ]; then NEED_SUDO=1; fi
+if [ "$NEED_SUDO" -eq 1 ]; then
+  sudo -v || die "sudo access is required (apt / board install) — run as a sudo-capable user, or use: --skip-apt --no-board"
+  ( while true; do sleep 50; sudo -n true 2>/dev/null || break; done ) &
+  SUDO_KEEPALIVE_PID=$!
+  ok "sudo authenticated (keep-alive active)"
+fi
 
 # ─── 1. apt dependencies ────────────────────────────────────────────────────
 step "1. Build dependencies (apt)"
@@ -385,9 +407,8 @@ $ANVIL_CMD doctor < /dev/null
 # stops the whole pipeline when a long job like `anvil build` starts).
 if [ "$DO_TEST" -eq 1 ]; then
   step "9. Integration test (system commands)"
-  TESTDIR="$HOME/opt/_anvil_integration_test"
+  TESTDIR="$HOME/opt/_anvil_integration_test"   # global: removed by cleanup() on any exit
   rm -rf "$TESTDIR"; mkdir -p "$TESTDIR"
-  trap 'rm -rf "$TESTDIR"' EXIT          # always clean up, even on failure
 
   echo "  scaffolding + building a test project in $TESTDIR ..."
   set +e
@@ -402,7 +423,7 @@ if [ "$DO_TEST" -eq 1 ]; then
   [ -n "$bit" ] || die "integration test FAILED — no bitstream produced"
   ok "bitstream produced: ${bit#$TESTDIR/}"
 
-  rm -rf "$TESTDIR"; trap - EXIT
+  rm -rf "$TESTDIR"; TESTDIR=""    # cleaned up; clear so cleanup() is a no-op
   ok "test project removed"
 else
   skip "integration test (--no-test)"
