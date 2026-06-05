@@ -123,6 +123,7 @@ check_tools() {
 # ─── Cleanup (single EXIT handler so steps don't fight over the trap) ────────
 SUDO_KEEPALIVE_PID=""
 TESTDIR=""
+ANVIL_FALLBACK=""          # set to the tag if we fell back past the GitHub API
 cleanup() {
   [ -n "$SUDO_KEEPALIVE_PID" ] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
   [ -n "$TESTDIR" ] && rm -rf "$TESTDIR" 2>/dev/null || true
@@ -173,20 +174,27 @@ if [ ! -d "$ANVIL_DIR/.git" ]; then
   git clone "$ANVIL_REPO" "$ANVIL_DIR"
   ok "cloned Anvil"
 fi
-# Check out the GitHub Latest release (not main — they can diverge); or a pinned tag.
+# Resolve the Anvil release to install (not main — main and releases can diverge).
+git -C "$ANVIL_DIR" fetch --tags --force --quiet origin 2>/dev/null || true
 if [ "$ANVIL_VERSION" = "latest" ]; then
+  # GitHub "Latest" via API; fall back to the newest git tag if the API is
+  # unreachable or rate-limited (git isn't subject to the 60/hr-per-IP REST limit).
   target="$(curl -fsSL "$ANVIL_LATEST_API" 2>/dev/null \
     | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  if [ -z "$target" ]; then
+    target="$(git -C "$ANVIL_DIR" tag -l | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+    if [ -n "$target" ]; then
+      ANVIL_FALLBACK="$target"
+      echo "${Y}  [warn]${N} GitHub API rate-limited/unavailable — falling back to newest tag '$target' (may not be the latest release)"
+    fi
+  fi
 else
   target="$ANVIL_VERSION"
 fi
-git -C "$ANVIL_DIR" fetch --tags --force --quiet origin 2>/dev/null || true
-if [ -n "$target" ] && git -C "$ANVIL_DIR" checkout --quiet "$target" 2>/dev/null; then
-  ok "Anvil at $target ($(git -C "$ANVIL_DIR" rev-parse --short HEAD))"
-else
-  echo "${Y}  [warn]${N} could not resolve latest release (got '$target') — staying on current branch"
-  git -C "$ANVIL_DIR" pull --ff-only --quiet 2>/dev/null || true
-fi
+# Always a release tag, never main: if nothing resolves, stop rather than use main.
+[ -n "$target" ] || die "could not resolve an Anvil release tag (API unavailable and no local tags) — refusing to fall back to main"
+git -C "$ANVIL_DIR" checkout --quiet "$target" || die "failed to check out Anvil release '$target'"
+ok "Anvil at $target ($(git -C "$ANVIL_DIR" rev-parse --short HEAD))"
 require_file "$ANVIL_DIR/anvil.py"
 chmod +x "$ANVIL_DIR/anvil.py"
 if ! grep -qs 'alias anvil=' "$HOME/.bashrc"; then
@@ -393,3 +401,9 @@ else
   echo "${G}${B}✓ Toolchain installed${N}${G} (integration test skipped)${N}"
 fi
 echo "Open a new shell (or 'source ~/.bashrc') so the 'anvil' alias and conda are active."
+
+if [ -n "$ANVIL_FALLBACK" ]; then
+  echo
+  echo "${Y}${B}⚠ Anvil was installed from '$ANVIL_FALLBACK' (GitHub API was rate-limited),${N}"
+  echo "${Y}  which may not be the latest release. Everything works — but run 'anvil update' as soon as you can.${N}"
+fi
