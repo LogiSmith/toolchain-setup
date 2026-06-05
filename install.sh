@@ -261,12 +261,14 @@ if [ "$DO_TEST" -eq 1 ]; then
   trap 'rm -rf "$TESTDIR"' EXIT          # always clean up, even on failure
 
   echo "  scaffolding + building a test project in $TESTDIR ..."
-  # Use a single `bash -ic "...&&..."` (not a heredoc): reading commands
-  # interactively from a heredoc triggers per-command job control, which gets
-  # stopped (SIGTTOU) when the installer runs under `curl | bash`. The -c form
-  # still loads ~/.bashrc (so the `anvil` alias is the real system command).
+  # Run through `setsid bash -ic`: -i loads ~/.bashrc so `anvil` is the real
+  # system command (alias), while setsid starts a new session with NO controlling
+  # terminal — so the interactive shell never tries to grab the tty for job
+  # control. Without this, running under `curl | bash` gets stopped (SIGTTOU)
+  # when a long foreground job like `anvil build` starts. setsid --wait
+  # propagates the child's exit status.
   set +e
-  bash -ic "cd '$TESTDIR' && anvil init --board Nexys-A7-100T --example uart-hello && anvil build"
+  setsid --wait bash -ic "cd '$TESTDIR' && anvil init --board Nexys-A7-100T --example uart-hello && anvil build"
   rc=$?
   set -e
   [ "$rc" -eq 0 ] || die "integration test FAILED during 'anvil init'/'anvil build'"
