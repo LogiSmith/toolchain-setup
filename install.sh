@@ -174,11 +174,10 @@ if [ ! -d "$ANVIL_DIR/.git" ]; then
   git clone "$ANVIL_REPO" "$ANVIL_DIR"
   ok "cloned Anvil"
 fi
-# Resolve the Anvil release to install (not main — main and releases can diverge).
+# Resolve the Anvil release to install — always a release tag, never main.
 git -C "$ANVIL_DIR" fetch --tags --force --quiet origin 2>/dev/null || true
 if [ "$ANVIL_VERSION" = "latest" ]; then
-  # GitHub "Latest" via API; fall back to the newest git tag if the API is
-  # unreachable or rate-limited (git isn't subject to the 60/hr-per-IP REST limit).
+  # GitHub "Latest" via API; fall back to newest git tag if rate-limited (git has no such limit).
   target="$(curl -fsSL "$ANVIL_LATEST_API" 2>/dev/null \
     | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
   if [ -z "$target" ]; then
@@ -191,7 +190,6 @@ if [ "$ANVIL_VERSION" = "latest" ]; then
 else
   target="$ANVIL_VERSION"
 fi
-# Always a release tag, never main: if nothing resolves, stop rather than use main.
 [ -n "$target" ] || die "could not resolve an Anvil release tag (API unavailable and no local tags) — refusing to fall back to main"
 git -C "$ANVIL_DIR" checkout --quiet "$target" || die "failed to check out Anvil release '$target'"
 ok "Anvil at $target ($(git -C "$ANVIL_DIR" rev-parse --short HEAD))"
@@ -254,8 +252,7 @@ if [ ! -d "$F4PGA_EXAMPLES/.git" ]; then
 else
   skip "f4pga-examples already at $F4PGA_EXAMPLES"
 fi
-# Pin to a known-good commit — its environment.yml defines the xc7 env, so this is
-# what makes the conda environment reproducible.
+# Pin to a known-good commit — its environment.yml defines (and so fixes) the xc7 env.
 git -C "$F4PGA_EXAMPLES" fetch --quiet origin 2>/dev/null || true
 git -C "$F4PGA_EXAMPLES" checkout --quiet "$F4PGA_EXAMPLES_REF" \
   || die "could not check out pinned f4pga-examples@${F4PGA_EXAMPLES_REF:0:7}"
