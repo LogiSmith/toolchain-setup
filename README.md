@@ -49,7 +49,22 @@ curl -fsSL https://raw.githubusercontent.com/LogiSmith/toolchain-setup/main/inst
 | `--skip-apt` | Skip the apt steps (deps already present) |
 | `-h`, `--help` | Show help |
 
-The installer is **idempotent** — re-running skips anything already installed.
+The installer is **idempotent** — re-running skips anything already installed,
+and is **update-aware**: it checks out the **latest published Anvil release**
+(GitHub Releases, not `main`) and picks up any bumped dependency versions. So
+re-running it (or `anvil update`) updates the whole toolchain, not just one part.
+Dependency pins are the "lockfile" at the top of `install.sh`; Anvil itself
+tracks its latest release — see [VERSIONS.md](VERSIONS.md).
+
+## Updating
+
+```bash
+anvil update            # from anywhere — re-runs this installer
+# or directly:
+curl -fsSL https://raw.githubusercontent.com/LogiSmith/toolchain-setup/main/install.sh | bash
+```
+
+`anvil update` passes flags through, e.g. `anvil update --no-test`.
 
 ## What the integration test does
 

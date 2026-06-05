@@ -24,10 +24,14 @@
 set -euo pipefail
 
 # ─── Pinned versions ────────────────────────────────────────────────────────
+# This block is the toolchain "lockfile": the component versions that are tested
+# to work together. See VERSIONS.md for the history of tested combinations.
+ANVIL_VERSION="latest"                 # GitHub "Latest" release; or pin a tag, e.g. v1.0.0
 SV2V_VERSION="v0.0.13"
 F4PGA_TIMESTAMP="20220907-210059"
 F4PGA_HASH="66a976d"
 ANVIL_REPO="https://github.com/LogiSmith/Anvil.git"
+ANVIL_LATEST_API="https://api.github.com/repos/LogiSmith/Anvil/releases/latest"
 
 # ─── Paths (must match anvil.py) ────────────────────────────────────────────
 ANVIL_DIR="$HOME/opt/anvil"
@@ -105,12 +109,26 @@ fi
 
 # ─── 2. Anvil CLI ───────────────────────────────────────────────────────────
 step "2. Anvil CLI"
-if [ -d "$ANVIL_DIR/.git" ]; then
-  skip "Anvil already cloned at $ANVIL_DIR"
-else
+if [ ! -d "$ANVIL_DIR/.git" ]; then
   mkdir -p "$(dirname "$ANVIL_DIR")"
   git clone "$ANVIL_REPO" "$ANVIL_DIR"
   ok "cloned Anvil"
+fi
+# Resolve the target tag: the GitHub "Latest" release (NOT main — main and the
+# latest release can be out of sync). Pin a specific tag via ANVIL_VERSION.
+if [ "$ANVIL_VERSION" = "latest" ]; then
+  target="$(curl -fsSL "$ANVIL_LATEST_API" 2>/dev/null \
+    | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+else
+  target="$ANVIL_VERSION"
+fi
+git -C "$ANVIL_DIR" fetch --tags --force --quiet origin 2>/dev/null || true
+if [ -n "$target" ] && git -C "$ANVIL_DIR" checkout --quiet "$target" 2>/dev/null; then
+  ok "Anvil at $target ($(git -C "$ANVIL_DIR" rev-parse --short HEAD))"
+else
+  echo "${Y}  [warn]${N} could not resolve latest release (got '$target') —"
+  echo "          is a release published on GitHub? Staying on current branch."
+  git -C "$ANVIL_DIR" pull --ff-only --quiet 2>/dev/null || true
 fi
 chmod +x "$ANVIL_DIR/anvil.py"
 if ! grep -qs 'alias anvil=' "$HOME/.bashrc"; then
