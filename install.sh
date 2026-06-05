@@ -13,6 +13,7 @@ SV2V_VERSION="v0.0.13"
 SV2V_SHA256="552799a1d76cd177b9b4cc63a3e77823a3d2a6eb4ec006569288abeff28e1ff8"
 F4PGA_TIMESTAMP="20220907-210059"
 F4PGA_HASH="66a976d"
+F4PGA_EXAMPLES_REF="13f11197b33dae1cde3bf146f317d63f0134eacf"  # its environment.yml defines the xc7 env
 ANVIL_REPO="https://github.com/LogiSmith/Anvil.git"
 ANVIL_LATEST_API="https://api.github.com/repos/LogiSmith/Anvil/releases/latest"
 
@@ -245,6 +246,12 @@ if [ ! -d "$F4PGA_EXAMPLES/.git" ]; then
 else
   skip "f4pga-examples already at $F4PGA_EXAMPLES"
 fi
+# Pin to a known-good commit — its environment.yml defines the xc7 env, so this is
+# what makes the conda environment reproducible.
+git -C "$F4PGA_EXAMPLES" fetch --quiet origin 2>/dev/null || true
+git -C "$F4PGA_EXAMPLES" checkout --quiet "$F4PGA_EXAMPLES_REF" \
+  || die "could not check out pinned f4pga-examples@${F4PGA_EXAMPLES_REF:0:7}"
+ok "f4pga-examples at ${F4PGA_EXAMPLES_REF:0:7}"
 # Accept channel ToS non-interactively — else conda prompts on stdin, which under
 # curl|bash is the script itself (conda would eat the rest and the run stops).
 conda tos accept --channel https://repo.anaconda.com/pkgs/main \

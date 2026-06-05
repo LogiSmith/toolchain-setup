@@ -8,9 +8,9 @@ tested, so updates aren't blind.
 When bumping a pin: change it in `install.sh`, run the installer end to end
 (including the integration test), and add a row here.
 
-| Toolchain | Anvil | sv2v | F4PGA arch-defs | Tested on | Date | Notes |
-|-----------|-------|------|-----------------|-----------|------|-------|
-| 2026.06.0 | v1.0.0 | v0.0.13 | `66a976d` (20220907-210059) | Ubuntu 22.04 / WSL2 | 2026-06-05 | Initial pinned set |
+| Toolchain | Anvil | sv2v | F4PGA arch-defs | f4pga-examples | Tested on | Date | Notes |
+|-----------|-------|------|-----------------|----------------|-----------|------|-------|
+| 2026.06.0 | v1.0.0 | v0.0.13 | `66a976d` (20220907-210059) | `13f1119` | Ubuntu 22.04 / WSL2 | 2026-06-05 | Initial pinned set |
 
 ## Conventions
 
@@ -19,5 +19,7 @@ When bumping a pin: change it in `install.sh`, run the installer end to end
 - **Anvil** — tracks the **latest published GitHub release** (`ANVIL_VERSION=latest`
   in `install.sh`), not `main`. The release tag matches the `VERSION` file in the
   Anvil repo. Pin a specific tag by setting `ANVIL_VERSION=vX.Y.Z`.
+- **f4pga-examples** — pinned to a commit (`F4PGA_EXAMPLES_REF` in `install.sh`);
+  its `environment.yml` defines the `xc7` conda env, so this fixes the env contents.
 - A row is only added once the combination has passed the installer's end-to-end
   integration test on the listed platform.
