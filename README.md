@@ -45,16 +45,19 @@ curl -fsSL https://raw.githubusercontent.com/LogiSmith/toolchain-setup/main/inst
 |------|--------|
 | `--minimal` | Skip optional tools (RISC-V + openFPGALoader/board) |
 | `--no-board` | Skip only openFPGALoader + udev |
-| `--no-test` | Skip the end-to-end build self-test |
+| `--no-test` | Skip the final integration test |
 | `--skip-apt` | Skip the apt steps (deps already present) |
 | `-h`, `--help` | Show help |
 
 The installer is **idempotent** — re-running skips anything already installed.
 
-## What the self-test does
+## What the integration test does
 
-After installing, it runs `anvil doctor` and then builds the `uart-hello`
-example end to end, failing if no bitstream is produced. Skip with `--no-test`.
+After installing, it runs `anvil doctor`, then — using the real system `anvil`
+command (via an interactive shell, so the installed alias is exercised) —
+scaffolds a `uart-hello` project under `~/opt`, builds it end to end, verifies a
+bitstream was produced, and deletes the project. Fails loudly if anything breaks.
+Skip with `--no-test`.
 
 ## License
 

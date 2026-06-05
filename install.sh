@@ -17,7 +17,7 @@
 # Options:
 #   --minimal     Skip optional tools (RISC-V toolchain + openFPGALoader/board)
 #   --no-board    Skip only openFPGALoader + udev (no board programming)
-#   --no-test     Skip the end-to-end build self-test
+#   --no-test     Skip the final integration test (scaffold/build/delete a project)
 #   --skip-apt    Skip the apt-get steps (assume deps already present)
 #   -h, --help    Show this help
 #
@@ -50,7 +50,7 @@ Usage: ./install.sh [options]
 Options:
   --minimal     Skip optional tools (RISC-V toolchain + openFPGALoader/board)
   --no-board    Skip only openFPGALoader + udev (no board programming)
-  --no-test     Skip the end-to-end build self-test
+  --no-test     Skip the final integration test (scaffold/build/delete a project)
   --skip-apt    Skip the apt-get steps (assume deps already present)
   -h, --help    Show this help
 
@@ -77,6 +77,11 @@ step() { echo; echo "${B}==> $*${N}"; }
 ok()   { echo "${G}  [ok]${N} $*"; }
 skip() { echo "${Y}  [skip]${N} $*"; }
 die()  { echo "${R}[ERROR]${N} $*" >&2; exit 1; }
+
+# Run anvil exactly as a user would: through an interactive shell so the
+# ~/.bashrc `anvil` alias and conda init are loaded (aliases don't exist in
+# non-interactive shells, and Ubuntu's ~/.bashrc early-returns for them).
+anvil_sys() { bash -ic "anvil $*"; }
 
 # ─── Preflight ──────────────────────────────────────────────────────────────
 step "Preflight checks"
@@ -241,22 +246,37 @@ fi
 
 # ─── 8. Verify ──────────────────────────────────────────────────────────────
 step "8. Verify — anvil doctor"
-$ANVIL doctor
+anvil_sys doctor
 
+# ─── 9. Integration test ────────────────────────────────────────────────────
+# Final end-to-end check using the real system `anvil` command: scaffold a test
+# project under ~/opt, build it to a bitstream, then remove it. Skip with --no-test.
 if [ "$DO_TEST" -eq 1 ]; then
-  step "8b. End-to-end build test (uart-hello)"
-  testdir="$(mktemp -d)/uart-hello"
-  mkdir -p "$testdir"
-  ( cd "$testdir"
-    $ANVIL init --board Nexys-A7-100T --example uart-hello
-    $ANVIL build
-    bit="$(find build -name '*.bit' 2>/dev/null | head -1)"
-    [ -n "$bit" ] || die "no bitstream produced — toolchain test FAILED"
-    echo "${G}  [ok]${N} bitstream: $bit"
-  )
-  rm -rf "$(dirname "$testdir")"
+  step "9. Integration test (system commands)"
+  TESTDIR="$HOME/opt/_anvil_integration_test"
+  rm -rf "$TESTDIR"; mkdir -p "$TESTDIR"
+  trap 'rm -rf "$TESTDIR"' EXIT          # always clean up, even on failure
+
+  echo "  scaffolding + building a test project in $TESTDIR ..."
+  set +e
+  bash -i <<EOF
+set -euo pipefail
+cd "$TESTDIR"
+anvil init --board Nexys-A7-100T --example uart-hello
+anvil build
+EOF
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || die "integration test FAILED during 'anvil init'/'anvil build'"
+
+  bit="$(find "$TESTDIR/build" -name '*.bit' 2>/dev/null | head -1)"
+  [ -n "$bit" ] || die "integration test FAILED — no bitstream produced"
+  ok "bitstream produced: ${bit#$TESTDIR/}"
+
+  rm -rf "$TESTDIR"; trap - EXIT
+  ok "test project removed"
 else
-  skip "end-to-end build test (--no-test)"
+  skip "integration test (--no-test)"
 fi
 
 step "Done"
