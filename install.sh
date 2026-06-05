@@ -78,11 +78,6 @@ ok()   { echo "${G}  [ok]${N} $*"; }
 skip() { echo "${Y}  [skip]${N} $*"; }
 die()  { echo "${R}[ERROR]${N} $*" >&2; exit 1; }
 
-# Run anvil exactly as a user would: through an interactive shell so the
-# ~/.bashrc `anvil` alias and conda init are loaded (aliases don't exist in
-# non-interactive shells, and Ubuntu's ~/.bashrc early-returns for them).
-anvil_sys() { bash -ic "anvil $*"; }
-
 # ─── Preflight ──────────────────────────────────────────────────────────────
 step "Preflight checks"
 [ "$(uname -s)" = "Linux" ] || die "This installer targets Linux (Ubuntu)."
@@ -124,7 +119,13 @@ if ! grep -qs 'alias anvil=' "$HOME/.bashrc"; then
 else
   skip "'anvil' alias already in ~/.bashrc"
 fi
-ANVIL="python3 $ANVIL_DIR/anvil.py"   # used directly below (alias not active in this shell)
+# Resolve the command the installed `anvil` alias actually runs, straight from
+# ~/.bashrc. This lets the verify/test steps exercise the real installed entry
+# point without an interactive shell (aliases only expand interactively, and an
+# interactive shell fights job control under `curl | bash`). Falls back to the
+# known launcher if the alias line can't be parsed.
+ANVIL_CMD="$(sed -nE 's/^alias anvil="(.*)"$/\1/p' "$HOME/.bashrc" | head -1)"
+[ -n "$ANVIL_CMD" ] || ANVIL_CMD="python3 $ANVIL_DIR/anvil.py"
 
 # ─── 3. sv2v ────────────────────────────────────────────────────────────────
 step "3. sv2v ($SV2V_VERSION)"
@@ -249,11 +250,16 @@ fi
 
 # ─── 8. Verify ──────────────────────────────────────────────────────────────
 step "8. Verify — anvil doctor"
-anvil_sys doctor
+$ANVIL_CMD doctor < /dev/null
 
 # ─── 9. Integration test ────────────────────────────────────────────────────
-# Final end-to-end check using the real system `anvil` command: scaffold a test
-# project under ~/opt, build it to a bitstream, then remove it. Skip with --no-test.
+# Final end-to-end check using the installed `anvil` command (resolved from the
+# alias in ~/.bashrc): scaffold a test project under ~/opt, build it to a
+# bitstream, then remove it. Skip with --no-test.
+#
+# Runs non-interactively with stdin from /dev/null so that, even under
+# `curl | bash`, no child can grab the terminal for job control (which otherwise
+# stops the whole pipeline when a long job like `anvil build` starts).
 if [ "$DO_TEST" -eq 1 ]; then
   step "9. Integration test (system commands)"
   TESTDIR="$HOME/opt/_anvil_integration_test"
@@ -261,14 +267,10 @@ if [ "$DO_TEST" -eq 1 ]; then
   trap 'rm -rf "$TESTDIR"' EXIT          # always clean up, even on failure
 
   echo "  scaffolding + building a test project in $TESTDIR ..."
-  # Run through `setsid bash -ic`: -i loads ~/.bashrc so `anvil` is the real
-  # system command (alias), while setsid starts a new session with NO controlling
-  # terminal — so the interactive shell never tries to grab the tty for job
-  # control. Without this, running under `curl | bash` gets stopped (SIGTTOU)
-  # when a long foreground job like `anvil build` starts. setsid --wait
-  # propagates the child's exit status.
   set +e
-  setsid --wait bash -ic "cd '$TESTDIR' && anvil init --board Nexys-A7-100T --example uart-hello && anvil build"
+  ( cd "$TESTDIR" \
+      && $ANVIL_CMD init --board Nexys-A7-100T --example uart-hello \
+      && $ANVIL_CMD build ) < /dev/null
   rc=$?
   set -e
   [ "$rc" -eq 0 ] || die "integration test FAILED during 'anvil init'/'anvil build'"

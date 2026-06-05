@@ -53,11 +53,10 @@ The installer is **idempotent** — re-running skips anything already installed.
 
 ## What the integration test does
 
-After installing, it runs `anvil doctor`, then — using the real system `anvil`
-command (via an interactive shell, so the installed alias is exercised) —
-scaffolds a `uart-hello` project under `~/opt`, builds it end to end, verifies a
-bitstream was produced, and deletes the project. Fails loudly if anything breaks.
-Skip with `--no-test`.
+After installing, it runs `anvil doctor`, then — using the installed `anvil`
+command (resolved from the alias in `~/.bashrc`) — scaffolds a `uart-hello`
+project under `~/opt`, builds it end to end, verifies a bitstream was produced,
+and deletes the project. Fails loudly if anything breaks. Skip with `--no-test`.
 
 ## License
 
