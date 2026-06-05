@@ -1,35 +1,14 @@
 #!/usr/bin/env bash
 #
 # LogiSmith FPGA toolchain installer — Ubuntu (native or WSL2).
-#
-# Installs everything Anvil needs at the fixed paths it expects:
-#   ~/opt/anvil          Anvil CLI
-#   ~/opt/sv2v/sv2v      SystemVerilog -> Verilog
-#   ~/miniconda3         Conda (with the `xc7` F4PGA env)
-#   ~/opt/f4pga/xc7      F4PGA architecture definitions
-#   ~/f4pga-examples     F4PGA examples (common.mk)
-#
-# Idempotent: safe to re-run; already-installed steps are skipped.
-#
-# Usage:
-#   ./install.sh [options]
-#
-# Options:
-#   --minimal     Skip optional tools (RISC-V toolchain + openFPGALoader/board)
-#   --no-board    Skip only openFPGALoader + udev (no board programming)
-#   --no-test     Skip the final integration test (scaffold/build/delete a project)
-#   --skip-apt    Skip the apt-get steps (assume deps already present)
-#   -h, --help    Show this help
+# Installs Anvil + sv2v + Miniconda/F4PGA at the fixed paths anvil.py expects.
+# Idempotent and re-runnable; see --help for options.
 #
 set -Eeuo pipefail        # -E: ERR trap fires inside functions/subshells too
+export DEBIAN_FRONTEND=noninteractive   # avoid apt/needrestart prompts under curl|bash
 
-# Non-interactive apt: avoid needrestart/config prompts stalling under `curl | bash`.
-export DEBIAN_FRONTEND=noninteractive
-
-# ─── Pinned versions ────────────────────────────────────────────────────────
-# This block is the toolchain "lockfile": the component versions that are tested
-# to work together. See VERSIONS.md for the history of tested combinations.
-ANVIL_VERSION="latest"                 # GitHub "Latest" release; or pin a tag, e.g. v1.0.0
+# ─── Pinned versions (toolchain "lockfile" — see VERSIONS.md) ────────────────
+ANVIL_VERSION="latest"                 # GitHub Latest release; or pin a tag, e.g. v1.0.0
 SV2V_VERSION="v0.0.13"
 SV2V_SHA256="552799a1d76cd177b9b4cc63a3e77823a3d2a6eb4ec006569288abeff28e1ff8"
 F4PGA_TIMESTAMP="20220907-210059"
@@ -37,14 +16,10 @@ F4PGA_HASH="66a976d"
 ANVIL_REPO="https://github.com/LogiSmith/Anvil.git"
 ANVIL_LATEST_API="https://api.github.com/repos/LogiSmith/Anvil/releases/latest"
 
-# SHA256 pins for the immutable, version-pinned F4PGA downloads.
-# (Miniconda is intentionally "latest" — a moving target with no stable hash;
-#  its integrity comes from HTTPS + the post-install conda check.)
+# SHA256 of the immutable F4PGA downloads (Miniconda is latest-by-design, no pin).
 F4PGA_INSTALL_SHA256="8fa1aa9cfc033c9fef59c2ac19d4ff18568a66bc8ce15c3385cd9ec1d1901274"
 F4PGA_DEVICE_SHA256="49b355e8a442e46652c7b089c23dc020d4babb8009d8f4494e09d72e37b2e5ef"
-# Carry-chain patch target (fix_xc7_carry.py). The f4pga package is pinned to a
-# commit, so this file is deterministic: verify it's the known pre-patch version,
-# then that our edit produced the known post-patch version.
+# fix_xc7_carry.py before/after our patch (f4pga pinned → file is deterministic).
 CARRY_PRE_SHA256="3b6ac9ab514a9f56f9f42c1687d01beb4ab07e26aac52e98e11f568b29a443e5"
 CARRY_POST_SHA256="b70beddff4ded4d48a6f3b158650a0d436af81599086afb523b6726f8325ae7b"
 
@@ -100,20 +75,19 @@ info() { echo "  $*"; }
 die()  { echo "${R}[ERROR]${N} $*" >&2; exit 1; }
 
 # ─── Failure handling ───────────────────────────────────────────────────────
-# Any unhandled command failure (e.g. network drop mid-download/clone) lands here
-# with the step name + the exact command, so the run never continues blindly.
+# Report which step/command failed (e.g. a network drop) instead of continuing.
 on_error() {
   local line="$1" cmd="$2" ec="$3"
   echo >&2
   echo "${R}${B}✗ Install failed${N}${R} during step: ${CURRENT_STEP}${N}" >&2
   echo "${R}  command : ${cmd}${N}" >&2
   echo "${R}  exit    : ${ec} (line ${line})${N}" >&2
-  echo "${Y}  Fix the issue and re-run — the installer is idempotent, so completed steps are skipped.${N}" >&2
+  echo "${Y}  Fix the issue and re-run — the installer is idempotent.${N}" >&2
   exit "$ec"
 }
 trap 'rc=$?; on_error "$LINENO" "$BASH_COMMAND" "$rc"' ERR
 
-# Download with retries; fail loudly on a dead network and reject empty files.
+# Download with retries; reject a dead network or empty file.
 download() {  # download <url> <dest>
   local url="$1" dest="$2"
   wget --tries=3 --timeout=30 --waitretry=5 -q "$url" -O "$dest" \
@@ -121,36 +95,31 @@ download() {  # download <url> <dest>
   [ -s "$dest" ] || die "downloaded file is empty: $url"
 }
 
-# Verify a file's SHA256 against an expected value; no-op if expected is empty.
+# Verify a file's SHA256; no-op if expected is empty.
 verify_sha256() {  # verify_sha256 <file> <expected|"">
   local file="$1" expected="${2:-}" actual
-  [ -n "$expected" ] || { info "[info] no sha256 pinned for $(basename "$file") — skipping checksum"; return 0; }
+  [ -n "$expected" ] || { info "no sha256 pinned for $(basename "$file") — skipping checksum"; return 0; }
   actual="$(sha256sum "$file" | awk '{print $1}')"
   [ "$actual" = "$expected" ] || die "checksum mismatch for $(basename "$file")
     expected: $expected
     actual:   $actual"
-  info "[ok] sha256 verified: $(basename "$file")"
+  info "sha256 verified: $(basename "$file")"
 }
 
-# Post-condition assertions — confirm a step actually produced what it should.
+# Post-condition assertions — confirm a step produced what it should.
 require_file() { [ -e "$1" ] || die "expected path missing after '${CURRENT_STEP}': $1"; }
 require_cmd()  { command -v "$1" >/dev/null 2>&1 || die "expected command missing after '${CURRENT_STEP}': $1"; }
 
-# Runtime tools the installer relies on. Most are provided by the apt step; under
-# --skip-apt they must already be present. Checked early so a missing tool is a
-# clear up-front error instead of a cryptic failure mid-run.
+# Runtime tools (apt provides most; under --skip-apt they must already exist).
 RUNTIME_TOOLS="curl git wget unzip tar xz sha256sum awk sed python3"
 check_tools() {
   local t missing=""
   for t in $RUNTIME_TOOLS; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
-  [ -z "$missing" ] || die "missing required tools:${missing}
-    install them first (most come from the apt step; you passed --skip-apt)."
-  ok "required tools present (${RUNTIME_TOOLS})"
+  [ -z "$missing" ] || die "missing required tools:${missing}"
+  ok "required tools present"
 }
 
-# ─── Cleanup (single EXIT handler) ──────────────────────────────────────────
-# One place to tear everything down, so individual steps don't fight over the
-# EXIT trap. Runs on normal exit, on die(), and on an ERR-trap exit.
+# ─── Cleanup (single EXIT handler so steps don't fight over the trap) ────────
 SUDO_KEEPALIVE_PID=""
 TESTDIR=""
 cleanup() {
@@ -169,11 +138,9 @@ fi
 [ "$(id -u)" -ne 0 ] || die "Run as a normal user (not root); sudo is used where needed."
 command -v sudo >/dev/null || die "sudo is required."
 ok "Linux / user / sudo present"
-# With --skip-apt nothing gets installed, so all runtime tools must already exist.
-[ "$DO_APT" -eq 1 ] || check_tools
+[ "$DO_APT" -eq 1 ] || check_tools   # --skip-apt: nothing installs them, so require now
 
-# Cache sudo credentials up front (clear early failure if the user can't sudo),
-# then keep them warm in the background so a long install never re-prompts mid-run.
+# Cache sudo up front + keep it warm so a long install never re-prompts mid-run.
 NEED_SUDO=0
 if [ "$DO_APT" -eq 1 ] || [ "$DO_BOARD" -eq 1 ]; then NEED_SUDO=1; fi
 if [ "$NEED_SUDO" -eq 1 ]; then
@@ -193,7 +160,7 @@ if [ "$DO_APT" -eq 1 ]; then
       libftdi1-dev libhidapi-dev zlib1g-dev unzip wget curl xz-utils
   sudo apt-get install -y iverilog gtkwave
   ok "apt packages installed"
-  check_tools   # verify apt actually delivered everything we depend on
+  check_tools
 else
   skip "apt steps (--skip-apt)"
 fi
@@ -205,8 +172,7 @@ if [ ! -d "$ANVIL_DIR/.git" ]; then
   git clone "$ANVIL_REPO" "$ANVIL_DIR"
   ok "cloned Anvil"
 fi
-# Resolve the target tag: the GitHub "Latest" release (NOT main — main and the
-# latest release can be out of sync). Pin a specific tag via ANVIL_VERSION.
+# Check out the GitHub Latest release (not main — they can diverge); or a pinned tag.
 if [ "$ANVIL_VERSION" = "latest" ]; then
   target="$(curl -fsSL "$ANVIL_LATEST_API" 2>/dev/null \
     | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
@@ -217,8 +183,7 @@ git -C "$ANVIL_DIR" fetch --tags --force --quiet origin 2>/dev/null || true
 if [ -n "$target" ] && git -C "$ANVIL_DIR" checkout --quiet "$target" 2>/dev/null; then
   ok "Anvil at $target ($(git -C "$ANVIL_DIR" rev-parse --short HEAD))"
 else
-  echo "${Y}  [warn]${N} could not resolve latest release (got '$target') —"
-  echo "          is a release published on GitHub? Staying on current branch."
+  echo "${Y}  [warn]${N} could not resolve latest release (got '$target') — staying on current branch"
   git -C "$ANVIL_DIR" pull --ff-only --quiet 2>/dev/null || true
 fi
 require_file "$ANVIL_DIR/anvil.py"
@@ -229,11 +194,8 @@ if ! grep -qs 'alias anvil=' "$HOME/.bashrc"; then
 else
   skip "'anvil' alias already in ~/.bashrc"
 fi
-# Resolve the command the installed `anvil` alias actually runs, straight from
-# ~/.bashrc. This lets the verify/test steps exercise the real installed entry
-# point without an interactive shell (aliases only expand interactively, and an
-# interactive shell fights job control under `curl | bash`). Falls back to the
-# known launcher if the alias line can't be parsed.
+# The installed `anvil` command, read from the alias (aliases only expand in an
+# interactive shell, which fights job control under curl|bash — so we resolve it).
 ANVIL_CMD="$(sed -nE 's/^alias anvil="(.*)"$/\1/p' "$HOME/.bashrc" | head -1)"
 [ -n "$ANVIL_CMD" ] || ANVIL_CMD="python3 $ANVIL_DIR/anvil.py"
 
@@ -261,9 +223,7 @@ if [ -f "$CONDA_SH" ]; then
   skip "Miniconda already at $CONDA_DIR"
 else
   tmp="$(mktemp -d)"
-  # Intentionally the latest installer (moving target, no stable hash to pin).
-  # What matters for reproducibility is the xc7 env (pinned by environment.yml),
-  # not the Miniconda version. Integrity: HTTPS + the require_file check below.
+  # Latest by design (reproducibility comes from the xc7 env, not the installer).
   download "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" "$tmp/miniconda.sh"
   bash "$tmp/miniconda.sh" -b -p "$CONDA_DIR"
   rm -rf "$tmp"
@@ -285,9 +245,8 @@ if [ ! -d "$F4PGA_EXAMPLES/.git" ]; then
 else
   skip "f4pga-examples already at $F4PGA_EXAMPLES"
 fi
-# Accept Anaconda channel Terms of Service non-interactively. Without this, conda
-# prompts on stdin during solving — which under `curl | bash` IS the installer
-# script, so conda consumes the rest of it and the run silently stops.
+# Accept channel ToS non-interactively — else conda prompts on stdin, which under
+# curl|bash is the script itself (conda would eat the rest and the run stops).
 conda tos accept --channel https://repo.anaconda.com/pkgs/main \
                  --channel https://repo.anaconda.com/pkgs/r >/dev/null 2>&1 || true
 if conda env list | grep -qE "^xc7\s|/envs/xc7$"; then
@@ -296,24 +255,22 @@ else
   envyml="$F4PGA_EXAMPLES/environment.yml"
   [ -f "$envyml" ] || envyml="$F4PGA_EXAMPLES/xc7/environment.yml"
   [ -f "$envyml" ] || die "environment.yml not found in f4pga-examples"
-  conda env create -f "$envyml" < /dev/null   # < /dev/null: extra guard so conda can't eat the script
+  conda env create -f "$envyml" < /dev/null   # </dev/null: extra guard so conda can't eat the script
   conda env list | grep -qE "^xc7\s|/envs/xc7$" || die "conda env 'xc7' not found after create"
   ok "created conda env 'xc7'"
 fi
 
 step "5b. F4PGA architecture definitions (Artix-7)"
 marker="$F4PGA_INSTALL_DIR/$FPGA_FAM/.installed-$F4PGA_HASH"
-# Skip if our marker exists, OR if arch defs are already extracted on disk
-# (e.g. installed manually / from an exported image) — then write the marker.
+# Skip if already installed (our marker, or an existing share/ from a manual install).
 if [ -f "$marker" ] || [ -d "$F4PGA_INSTALL_DIR/$FPGA_FAM/share" ]; then
   touch "$marker" 2>/dev/null || true
-  skip "arch defs already installed (found $F4PGA_INSTALL_DIR/$FPGA_FAM/share)"
+  skip "arch defs already installed"
 else
   mkdir -p "$F4PGA_INSTALL_DIR/$FPGA_FAM"
   base="https://storage.googleapis.com/symbiflow-arch-defs/artifacts/prod/foss-fpga-tools/symbiflow-arch-defs/continuous/install/${F4PGA_TIMESTAMP}"
   tmp="$(mktemp -d)"
-  # Download to files first (with retries + optional checksum) so a truncated
-  # transfer is caught before we extract, instead of streaming straight to tar.
+  # Download to files (retry + checksum) before extracting, so truncation is caught.
   info "downloading install package..."
   download "$base/symbiflow-arch-defs-install-${FPGA_FAM}-${F4PGA_HASH}.tar.xz" "$tmp/install.tar.xz"
   verify_sha256 "$tmp/install.tar.xz" "$F4PGA_INSTALL_SHA256"
@@ -330,9 +287,7 @@ else
 fi
 
 step "5c. Carry-chain patch"
-# Hash-verified patch: confirm the file is the known pre-patch version, apply the
-# edit, then confirm it became the known post-patch version. Refuses to touch an
-# unexpected file (e.g. if the pinned f4pga version ever changes).
+# Verify pre-patch hash → patch → verify post-patch hash; refuse an unexpected file.
 patched=0
 for f in "$CONDA_DIR"/envs/xc7/lib/python3*/site-packages/f4pga/utils/xc7/fix_xc7_carry.py; do
   [ -f "$f" ] || continue
@@ -398,13 +353,8 @@ step "8. Verify — anvil doctor"
 $ANVIL_CMD doctor < /dev/null
 
 # ─── 9. Integration test ────────────────────────────────────────────────────
-# Final end-to-end check using the installed `anvil` command (resolved from the
-# alias in ~/.bashrc): scaffold a test project under ~/opt, build it to a
-# bitstream, then remove it. Skip with --no-test.
-#
-# Runs non-interactively with stdin from /dev/null so that, even under
-# `curl | bash`, no child can grab the terminal for job control (which otherwise
-# stops the whole pipeline when a long job like `anvil build` starts).
+# End-to-end check via the installed `anvil` command. Non-interactive + stdin from
+# /dev/null so nothing grabs the terminal (job control would stop curl|bash).
 if [ "$DO_TEST" -eq 1 ]; then
   step "9. Integration test (system commands)"
   TESTDIR="$HOME/opt/_anvil_integration_test"   # global: removed by cleanup() on any exit
@@ -423,7 +373,7 @@ if [ "$DO_TEST" -eq 1 ]; then
   [ -n "$bit" ] || die "integration test FAILED — no bitstream produced"
   ok "bitstream produced: ${bit#$TESTDIR/}"
 
-  rm -rf "$TESTDIR"; TESTDIR=""    # cleaned up; clear so cleanup() is a no-op
+  rm -rf "$TESTDIR"; TESTDIR=""
   ok "test project removed"
 else
   skip "integration test (--no-test)"
