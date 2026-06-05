@@ -136,6 +136,18 @@ verify_sha256() {  # verify_sha256 <file> <expected|"">
 require_file() { [ -e "$1" ] || die "expected path missing after '${CURRENT_STEP}': $1"; }
 require_cmd()  { command -v "$1" >/dev/null 2>&1 || die "expected command missing after '${CURRENT_STEP}': $1"; }
 
+# Runtime tools the installer relies on. Most are provided by the apt step; under
+# --skip-apt they must already be present. Checked early so a missing tool is a
+# clear up-front error instead of a cryptic failure mid-run.
+RUNTIME_TOOLS="curl git wget unzip tar xz sha256sum awk sed python3"
+check_tools() {
+  local t missing=""
+  for t in $RUNTIME_TOOLS; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
+  [ -z "$missing" ] || die "missing required tools:${missing}
+    install them first (most come from the apt step; you passed --skip-apt)."
+  ok "required tools present (${RUNTIME_TOOLS})"
+}
+
 # ─── Preflight ──────────────────────────────────────────────────────────────
 step "Preflight checks"
 [ "$(uname -s)" = "Linux" ] || die "This installer targets Linux (Ubuntu)."
@@ -146,6 +158,8 @@ fi
 [ "$(id -u)" -ne 0 ] || die "Run as a normal user (not root); sudo is used where needed."
 command -v sudo >/dev/null || die "sudo is required."
 ok "Linux / user / sudo present"
+# With --skip-apt nothing gets installed, so all runtime tools must already exist.
+[ "$DO_APT" -eq 1 ] || check_tools
 
 # ─── 1. apt dependencies ────────────────────────────────────────────────────
 step "1. Build dependencies (apt)"
@@ -154,9 +168,10 @@ if [ "$DO_APT" -eq 1 ]; then
   sudo apt-get install -y build-essential flex bison libssl-dev \
       libelf-dev bc python3 pahole cmake pkg-config \
       libusb-1.0-0-dev libudev-dev git g++ gcc \
-      libftdi1-dev libhidapi-dev zlib1g-dev unzip wget
+      libftdi1-dev libhidapi-dev zlib1g-dev unzip wget curl xz-utils
   sudo apt-get install -y iverilog gtkwave
   ok "apt packages installed"
+  check_tools   # verify apt actually delivered everything we depend on
 else
   skip "apt steps (--skip-apt)"
 fi
