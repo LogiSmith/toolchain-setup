@@ -261,13 +261,12 @@ if [ "$DO_TEST" -eq 1 ]; then
   trap 'rm -rf "$TESTDIR"' EXIT          # always clean up, even on failure
 
   echo "  scaffolding + building a test project in $TESTDIR ..."
+  # Use a single `bash -ic "...&&..."` (not a heredoc): reading commands
+  # interactively from a heredoc triggers per-command job control, which gets
+  # stopped (SIGTTOU) when the installer runs under `curl | bash`. The -c form
+  # still loads ~/.bashrc (so the `anvil` alias is the real system command).
   set +e
-  bash -i <<EOF
-set -euo pipefail
-cd "$TESTDIR"
-anvil init --board Nexys-A7-100T --example uart-hello
-anvil build
-EOF
+  bash -ic "cd '$TESTDIR' && anvil init --board Nexys-A7-100T --example uart-hello && anvil build"
   rc=$?
   set -e
   [ "$rc" -eq 0 ] || die "integration test FAILED during 'anvil init'/'anvil build'"
