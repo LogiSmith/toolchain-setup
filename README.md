@@ -21,9 +21,11 @@ Everything Anvil needs, at the fixed paths `anvil.py` expects:
 | `~/miniconda3` | Conda + the `xc7` F4PGA environment |
 | `~/opt/f4pga/xc7` | F4PGA architecture definitions (Artix-7) |
 | `~/f4pga-examples` | F4PGA examples (`common.mk`) |
+| `~/opt/verif` | venv with cocotb + forastero (simulation) |
 
-Plus the F4PGA carry-chain patch, and optionally the RISC-V toolchain and
-openFPGALoader (board programming).
+Plus the F4PGA carry-chain patch, and optionally the RISC-V toolchain,
+openFPGALoader (board programming), and simulation tools — Verilator (built from
+source) with cocotb + forastero (`--no-sim` to skip).
 
 ## Usage
 
@@ -43,8 +45,9 @@ curl -fsSL https://raw.githubusercontent.com/LogiSmith/toolchain-setup/main/inst
 
 | Flag | Effect |
 |------|--------|
-| `--minimal` | Skip optional tools (RISC-V + openFPGALoader/board) |
+| `--minimal` | Skip optional tools (RISC-V, openFPGALoader/board, simulation) |
 | `--no-board` | Skip only openFPGALoader + udev |
+| `--no-sim` | Skip simulation tools (Verilator + cocotb + forastero) |
 | `--no-test` | Skip the final integration test |
 | `--skip-apt` | Skip the apt steps (deps already present) |
 | `-h`, `--help` | Show help |

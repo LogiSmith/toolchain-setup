@@ -24,6 +24,11 @@ F4PGA_DEVICE_SHA256="49b355e8a442e46652c7b089c23dc020d4babb8009d8f4494e09d72e37b
 CARRY_PRE_SHA256="3b6ac9ab514a9f56f9f42c1687d01beb4ab07e26aac52e98e11f568b29a443e5"
 CARRY_POST_SHA256="b70beddff4ded4d48a6f3b158650a0d436af81599086afb523b6726f8325ae7b"
 
+# Simulation / verification tools (separate from the F4PGA synth flow).
+VERILATOR_VERSION="v5.048"             # latest stable tag (5.049 is devel-only, untagged)
+COCOTB_VERSION="2.0.1"
+FORASTERO_SPEC="forastero"             # latest compatible; append ==x.y.z to pin
+
 # ─── Paths (must match anvil.py) ────────────────────────────────────────────
 ANVIL_DIR="$HOME/opt/anvil"
 SV2V_DIR="$HOME/opt/sv2v"
@@ -32,9 +37,10 @@ CONDA_SH="$CONDA_DIR/etc/profile.d/conda.sh"
 F4PGA_INSTALL_DIR="$HOME/opt/f4pga"
 F4PGA_EXAMPLES="$HOME/f4pga-examples"
 FPGA_FAM="xc7"
+VERIF_VENV="$HOME/opt/verif"           # Python venv for cocotb + forastero
 
 # ─── Options ────────────────────────────────────────────────────────────────
-DO_RISCV=1; DO_BOARD=1; DO_TEST=1; DO_APT=1
+DO_RISCV=1; DO_BOARD=1; DO_TEST=1; DO_APT=1; DO_SIM=1
 
 usage() {
   cat <<'EOF'
@@ -43,8 +49,9 @@ LogiSmith FPGA toolchain installer — Ubuntu (native or WSL2).
 Usage: ./install.sh [options]
 
 Options:
-  --minimal     Skip optional tools (RISC-V toolchain + openFPGALoader/board)
+  --minimal     Skip optional tools (RISC-V, openFPGALoader/board, simulation)
   --no-board    Skip only openFPGALoader + udev (no board programming)
+  --no-sim      Skip simulation tools (Verilator + cocotb + forastero)
   --no-test     Skip the final integration test (scaffold/build/delete a project)
   --skip-apt    Skip the apt-get steps (assume deps already present)
   -h, --help    Show this help
@@ -56,8 +63,9 @@ EOF
 
 for arg in "$@"; do
   case "$arg" in
-    --minimal)  DO_RISCV=0; DO_BOARD=0 ;;
+    --minimal)  DO_RISCV=0; DO_BOARD=0; DO_SIM=0 ;;
     --no-board) DO_BOARD=0 ;;
+    --no-sim)   DO_SIM=0 ;;
     --no-test)  DO_TEST=0 ;;
     --skip-apt) DO_APT=0 ;;
     -h|--help)  usage; exit 0 ;;
@@ -144,7 +152,7 @@ ok "Linux / user / sudo present"
 
 # Cache sudo up front + keep it warm so a long install never re-prompts mid-run.
 NEED_SUDO=0
-if [ "$DO_APT" -eq 1 ] || [ "$DO_BOARD" -eq 1 ]; then NEED_SUDO=1; fi
+if [ "$DO_APT" -eq 1 ] || [ "$DO_BOARD" -eq 1 ] || [ "$DO_SIM" -eq 1 ]; then NEED_SUDO=1; fi
 if [ "$NEED_SUDO" -eq 1 ]; then
   sudo -v || die "sudo access is required (apt / board install) — run as a sudo-capable user, or use: --skip-apt --no-board"
   ( while true; do sleep 50; sudo -n true 2>/dev/null || break; done ) &
@@ -360,15 +368,45 @@ else
   skip "openFPGALoader + udev (--no-board / --minimal)"
 fi
 
-# ─── 8. Verify ──────────────────────────────────────────────────────────────
-step "8. Verify — anvil doctor"
+# ─── 8. Simulation tools (optional) ─────────────────────────────────────────
+step "8. Simulation tools (Verilator + cocotb + forastero)"
+if [ "$DO_SIM" -eq 1 ]; then
+  if [ "$DO_APT" -eq 1 ]; then
+    sudo apt-get install -y autoconf flex bison help2man libfl-dev ccache python3-venv
+  fi
+  # Verilator — built from source (apt's is too old for 5.x).
+  if command -v verilator >/dev/null && verilator --version 2>/dev/null | grep -q "${VERILATOR_VERSION#v}"; then
+    skip "Verilator ${VERILATOR_VERSION} already installed"
+  else
+    tmp="$(mktemp -d)"
+    git clone --quiet https://github.com/verilator/verilator "$tmp/verilator"
+    ( cd "$tmp/verilator" && git checkout --quiet "$VERILATOR_VERSION" \
+        && autoconf && ./configure && make -j"$(nproc)" && sudo make install )
+    rm -rf "$tmp"
+    require_cmd verilator
+    ok "installed $(verilator --version)"
+  fi
+  # cocotb + forastero in a dedicated venv (cocotb 2.x needs Python ≥3.8; the xc7
+  # conda env is 3.7, so these stay separate from the F4PGA flow).
+  [ -x "$VERIF_VENV/bin/python" ] || python3 -m venv "$VERIF_VENV"
+  "$VERIF_VENV/bin/pip" install --quiet --upgrade pip
+  "$VERIF_VENV/bin/pip" install --quiet "cocotb==${COCOTB_VERSION}" "$FORASTERO_SPEC"
+  "$VERIF_VENV/bin/python" -c "import cocotb" || die "cocotb import failed in $VERIF_VENV"
+  "$VERIF_VENV/bin/pip" show forastero >/dev/null 2>&1 || die "forastero not installed in $VERIF_VENV"
+  ok "cocotb ${COCOTB_VERSION} + forastero in $VERIF_VENV (use: source $VERIF_VENV/bin/activate)"
+else
+  skip "simulation tools (--no-sim / --minimal)"
+fi
+
+# ─── 9. Verify ──────────────────────────────────────────────────────────────
+step "9. Verify — anvil doctor"
 $ANVIL_CMD doctor < /dev/null
 
-# ─── 9. Integration test ────────────────────────────────────────────────────
+# ─── 10. Integration test ───────────────────────────────────────────────────
 # End-to-end check via the installed `anvil` command. Non-interactive + stdin from
 # /dev/null so nothing grabs the terminal (job control would stop curl|bash).
 if [ "$DO_TEST" -eq 1 ]; then
-  step "9. Integration test (system commands)"
+  step "10. Integration test (system commands)"
   TESTDIR="$HOME/opt/_anvil_integration_test"   # global: removed by cleanup() on any exit
   rm -rf "$TESTDIR"; mkdir -p "$TESTDIR"
 

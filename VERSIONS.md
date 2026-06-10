@@ -21,5 +21,8 @@ When bumping a pin: change it in `install.sh`, run the installer end to end
   Anvil repo. Pin a specific tag by setting `ANVIL_VERSION=vX.Y.Z`.
 - **f4pga-examples** — pinned to a commit (`F4PGA_EXAMPLES_REF` in `install.sh`);
   its `environment.yml` defines the `xc7` conda env, so this fixes the env contents.
+- **Simulation tools** (optional, `--no-sim`) — Verilator built from source
+  (`VERILATOR_VERSION`, currently `v5.048`), plus cocotb (`2.0.1`) + forastero in a
+  venv at `~/opt/verif`.
 - A row is only added once the combination has passed the installer's end-to-end
   integration test on the listed platform.
