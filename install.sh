@@ -237,6 +237,10 @@ step "4. Miniconda"
 if [ -f "$CONDA_SH" ]; then
   skip "Miniconda already at $CONDA_DIR"
 else
+  # A leftover dir without conda.sh = a previous install was interrupted; the
+  # Miniconda installer refuses an existing prefix, so stop with a clear fix.
+  [ ! -e "$CONDA_DIR" ] || die "Miniconda at $CONDA_DIR looks incomplete (interrupted install).
+    Remove it and re-run:  rm -rf $CONDA_DIR && anvil update"
   tmp="$(mktemp -d)"
   # Latest by design (reproducibility comes from the xc7 env, not the installer).
   download "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" "$tmp/miniconda.sh"
@@ -270,6 +274,9 @@ ok "f4pga-examples at ${F4PGA_EXAMPLES_REF:0:7}"
 conda tos accept --channel https://repo.anaconda.com/pkgs/main \
                  --channel https://repo.anaconda.com/pkgs/r >/dev/null 2>&1 || true
 if conda env list | grep -qE "^xc7\s|/envs/xc7$"; then
+  # Guard against a half-created env (interrupted earlier) that still lists.
+  [ -x "$CONDA_DIR/envs/xc7/bin/python" ] || die "conda env 'xc7' exists but looks incomplete (interrupted install).
+    Remove it and re-run:  conda env remove -n xc7 && anvil update"
   skip "conda env 'xc7' already exists"
 else
   envyml="$F4PGA_EXAMPLES/environment.yml"
@@ -287,7 +294,7 @@ if [ -f "$marker" ] || [ -d "$F4PGA_INSTALL_DIR/$FPGA_FAM/share" ]; then
   touch "$marker" 2>/dev/null || true
   skip "arch defs already installed"
 else
-  mkdir -p "$F4PGA_INSTALL_DIR/$FPGA_FAM"
+  mkdir -p "$F4PGA_INSTALL_DIR"
   base="https://storage.googleapis.com/symbiflow-arch-defs/artifacts/prod/foss-fpga-tools/symbiflow-arch-defs/continuous/install/${F4PGA_TIMESTAMP}"
   tmp="$(mktemp -d)"
   # Download to files (retry + checksum) before extracting, so truncation is caught.
@@ -297,10 +304,17 @@ else
   info "downloading xc7a100t device..."
   download "$base/symbiflow-arch-defs-xc7a100t_test-${F4PGA_HASH}.tar.xz" "$tmp/device.tar.xz"
   verify_sha256 "$tmp/device.tar.xz" "$F4PGA_DEVICE_SHA256"
+  # Extract into a staging dir on the SAME filesystem, then atomically rename into
+  # place. A crash mid-extract leaves only staging (cleaned up) — never a partial
+  # install that a later run would mistake for complete.
   info "extracting..."
-  tar -xJf "$tmp/install.tar.xz" -C "$F4PGA_INSTALL_DIR/${FPGA_FAM}"
-  tar -xJf "$tmp/device.tar.xz"  -C "$F4PGA_INSTALL_DIR/${FPGA_FAM}"
+  stage="$F4PGA_INSTALL_DIR/.${FPGA_FAM}-staging"
+  rm -rf "$stage"; mkdir -p "$stage"
+  tar -xJf "$tmp/install.tar.xz" -C "$stage"
+  tar -xJf "$tmp/device.tar.xz"  -C "$stage"
   rm -rf "$tmp"
+  rm -rf "$F4PGA_INSTALL_DIR/$FPGA_FAM"
+  mv "$stage" "$F4PGA_INSTALL_DIR/$FPGA_FAM"
   require_file "$F4PGA_INSTALL_DIR/$FPGA_FAM/share"
   touch "$marker"
   ok "installed arch defs"
