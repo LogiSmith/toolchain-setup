@@ -26,7 +26,7 @@ CARRY_POST_SHA256="b70beddff4ded4d48a6f3b158650a0d436af81599086afb523b6726f8325a
 
 # Simulation / verification tools (separate from the F4PGA synth flow).
 VERILATOR_VERSION="v5.048"             # latest stable tag (5.049 is devel-only, untagged)
-COCOTB_VERSION="2.0.1"
+COCOTB_VERSION="1.9.2"                 # forastero requires cocotb <2.0; 1.9.2 is the match
 FORASTERO_SPEC="forastero"             # latest compatible; append ==x.y.z to pin
 
 # ─── Paths (must match anvil.py) ────────────────────────────────────────────
@@ -386,7 +386,7 @@ if [ "$DO_SIM" -eq 1 ]; then
     require_cmd verilator
     ok "installed $(verilator --version)"
   fi
-  # cocotb + forastero in a dedicated venv (cocotb 2.x needs Python ≥3.8; the xc7
+  # cocotb + forastero together in a dedicated venv (needs Python ≥3.8; the xc7
   # conda env is 3.7, so these stay separate from the F4PGA flow).
   [ -x "$VERIF_VENV/bin/python" ] || python3 -m venv "$VERIF_VENV"
   "$VERIF_VENV/bin/pip" install --quiet --upgrade pip
