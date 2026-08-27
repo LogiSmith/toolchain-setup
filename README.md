@@ -1,7 +1,6 @@
 # toolchain-setup
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-ratko.pilipovic@fri.uni-lj.si
+
 One-shot installer for the **LogiSmith open-source FPGA toolchain** on Ubuntu
 (native or WSL2) or **Arch Linux**. It automates the [manual installation guide](https://logismith.github.io/Docs/installation/ubuntu/)
 and verifies the result with an end-to-end build.
