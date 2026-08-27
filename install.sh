@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# LogiSmith FPGA toolchain installer — Ubuntu (native or WSL2).
+# LogiSmith FPGA toolchain installer — Ubuntu (native or WSL2) or Arch Linux.
 # Installs Anvil + sv2v + Miniconda/F4PGA at the fixed paths anvil.py expects.
 # Idempotent and re-runnable; see --help for options.
 #
@@ -44,7 +44,7 @@ DO_RISCV=1; DO_BOARD=1; DO_TEST=1; DO_APT=1; DO_SIM=1
 
 usage() {
   cat <<'EOF'
-LogiSmith FPGA toolchain installer — Ubuntu (native or WSL2).
+LogiSmith FPGA toolchain installer — Ubuntu (native or WSL2) or Arch Linux.
 
 Usage: ./install.sh [options]
 
@@ -53,7 +53,7 @@ Options:
   --no-board    Skip only openFPGALoader + udev (no board programming)
   --no-sim      Skip simulation tools (Verilator + cocotb + forastero)
   --no-test     Skip the final integration test (scaffold/build/delete a project)
-  --skip-apt    Skip the apt-get steps (assume deps already present)
+  --skip-apt    Skip the package-manager steps (assume deps already present)
   -h, --help    Show this help
 
 Installs Anvil + sv2v + Miniconda/F4PGA at the fixed paths anvil.py expects.
@@ -119,7 +119,8 @@ verify_sha256() {  # verify_sha256 <file> <expected|"">
 require_file() { [ -e "$1" ] || die "expected path missing after '${CURRENT_STEP}': $1"; }
 require_cmd()  { command -v "$1" >/dev/null 2>&1 || die "expected command missing after '${CURRENT_STEP}': $1"; }
 
-# Runtime tools (apt provides most; under --skip-apt they must already exist).
+# Runtime tools (the package-manager step provides most; under --skip-apt they
+# must already exist).
 RUNTIME_TOOLS="curl git wget unzip tar xz sha256sum awk sed python3"
 check_tools() {
   local t missing=""
@@ -140,10 +141,13 @@ trap cleanup EXIT
 
 # ─── Preflight ──────────────────────────────────────────────────────────────
 step "Preflight checks"
-[ "$(uname -s)" = "Linux" ] || die "This installer targets Linux (Ubuntu)."
+[ "$(uname -s)" = "Linux" ] || die "This installer targets Linux (Ubuntu or Arch)."
 if [ -r /etc/os-release ]; then
   . /etc/os-release
-  [ "${ID:-}" = "ubuntu" ] || echo "${Y}  [warn]${N} Tested on Ubuntu; '${ID:-unknown}' may differ."
+  case "${ID:-}:${ID_LIKE:-}" in
+    ubuntu:*|arch:*|*:*ubuntu*|*:*debian*|*:*arch*) : ;;
+    *) echo "${Y}  [warn]${N} Tested on Ubuntu and Arch; '${ID:-unknown}' may differ." ;;
+  esac
 fi
 [ "$(id -u)" -ne 0 ] || die "Run as a normal user (not root); sudo is used where needed."
 command -v sudo >/dev/null || die "sudo is required."
@@ -161,18 +165,30 @@ if [ "$NEED_SUDO" -eq 1 ]; then
 fi
 
 # ─── 1. apt dependencies ────────────────────────────────────────────────────
-step "1. Build dependencies (apt)"
+step "1. Build dependencies (package manager)"
 if [ "$DO_APT" -eq 1 ]; then
-  sudo apt-get update
-  sudo apt-get install -y build-essential flex bison libssl-dev \
-      libelf-dev bc python3 pahole cmake pkg-config \
-      libusb-1.0-0-dev libudev-dev git g++ gcc \
-      libftdi1-dev libhidapi-dev zlib1g-dev unzip wget curl xz-utils
-  sudo apt-get install -y iverilog gtkwave
-  ok "apt packages installed"
-  check_tools
+  if command -v pacman >/dev/null 2>&1; then
+    # Arch Linux (pacman). -Syu (not just -Sy): partial upgrades are unsupported
+    # on Arch, so a plain sync-and-install can leave a broken mix of versions.
+    sudo pacman -Syu --needed --noconfirm \
+      base-devel flex bison openssl elfutils bc python cmake pkgconf \
+      pahole libusb libusb-compat git gcc libftdi hidapi zlib unzip wget curl xz \
+      iverilog gtkwave || die "pacman install failed"
+    ok "pacman packages installed"
+    check_tools
+  else
+    # Debian/Ubuntu (apt)
+    sudo apt-get update
+    sudo apt-get install -y build-essential flex bison libssl-dev \
+        libelf-dev bc python3 pahole cmake pkg-config \
+        libusb-1.0-0-dev libudev-dev git g++ gcc \
+        libftdi1-dev libhidapi-dev zlib1g-dev unzip wget curl xz-utils
+    sudo apt-get install -y iverilog gtkwave
+    ok "apt packages installed"
+    check_tools
+  fi
 else
-  skip "apt steps (--skip-apt)"
+  skip "package manager steps (--skip-apt)"
 fi
 
 # ─── 2. Anvil CLI ───────────────────────────────────────────────────────────
@@ -346,11 +362,40 @@ if [ "$DO_RISCV" -eq 1 ]; then
   if command -v riscv64-unknown-elf-g++ >/dev/null; then
     skip "riscv64-unknown-elf-g++ already present"
   elif [ "$DO_APT" -eq 1 ]; then
-    sudo apt-get install -y gcc-riscv64-unknown-elf
-    require_cmd riscv64-unknown-elf-g++
-    ok "installed RISC-V toolchain"
+    if command -v pacman >/dev/null 2>&1; then
+      # Arch's official package is riscv64-elf-gcc/-binutils — the *binaries* are
+      # named riscv64-elf-*, not Ubuntu's riscv64-unknown-elf-* (gcc-riscv64-unknown-elf).
+      # Install it, then symlink riscv64-elf-* -> riscv64-unknown-elf-* so anything
+      # (including this script's own check just above) that expects the
+      # Ubuntu-style prefix keeps working, without needing an AUR helper.
+      sudo pacman -S --needed --noconfirm riscv64-elf-gcc riscv64-elf-binutils \
+        || die "pacman install of riscv64-elf-gcc failed"
+      riscv_link_dir="$HOME/.local/bin"
+      mkdir -p "$riscv_link_dir"
+      linked=0
+      for real in /usr/bin/riscv64-elf-*; do
+        [ -e "$real" ] || continue
+        ln -sf "$real" "$riscv_link_dir/riscv64-unknown-elf-${real##*/riscv64-elf-}"
+        linked=1
+      done
+      [ "$linked" -eq 1 ] || die "riscv64-elf-gcc installed but no /usr/bin/riscv64-elf-* binaries found to link"
+      case ":$PATH:" in
+        *":$riscv_link_dir:"*) ;;
+        *)
+          grep -qs "$riscv_link_dir" "$HOME/.bashrc" \
+            || echo "export PATH=\"$riscv_link_dir:\$PATH\"" >> "$HOME/.bashrc"
+          export PATH="$riscv_link_dir:$PATH"
+          ;;
+      esac
+      require_cmd riscv64-unknown-elf-g++
+      ok "installed riscv64-elf-gcc, linked as riscv64-unknown-elf-* in $riscv_link_dir"
+    else
+      sudo apt-get install -y gcc-riscv64-unknown-elf
+      require_cmd riscv64-unknown-elf-g++
+      ok "installed RISC-V toolchain"
+    fi
   else
-    skip "would apt-install gcc-riscv64-unknown-elf (--skip-apt)"
+    skip "would install RISC-V toolchain (--skip-apt)"
   fi
 else
   skip "RISC-V toolchain (--minimal)"
@@ -371,6 +416,8 @@ if [ "$DO_BOARD" -eq 1 ]; then
   fi
   rules=/etc/udev/rules.d/99-openfpgaloader.rules
   if [ ! -f "$rules" ]; then
+    # Debian/Ubuntu create the "plugdev" group by default; Arch does not.
+    getent group plugdev >/dev/null || sudo groupadd -f plugdev
     echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6010", MODE="0666", GROUP="plugdev"' | sudo tee "$rules" >/dev/null
     sudo usermod -aG plugdev "$USER" || true
     sudo udevadm control --reload-rules 2>/dev/null && sudo udevadm trigger 2>/dev/null || true
@@ -386,7 +433,14 @@ fi
 step "8. Simulation tools (Verilator + cocotb + forastero)"
 if [ "$DO_SIM" -eq 1 ]; then
   if [ "$DO_APT" -eq 1 ]; then
-    sudo apt-get install -y autoconf flex bison help2man libfl-dev ccache python3-venv
+    if command -v pacman >/dev/null 2>&1; then
+      # No pacman equivalent needed for libfl-dev (bundled in Arch's flex) or
+      # python3-venv (Arch's python package includes the venv module).
+      sudo pacman -S --needed --noconfirm autoconf flex bison help2man ccache \
+        || die "pacman install (simulation build deps) failed"
+    else
+      sudo apt-get install -y autoconf flex bison help2man libfl-dev ccache python3-venv
+    fi
   fi
   # Verilator — built from source (apt's is too old for 5.x).
   if command -v verilator >/dev/null && verilator --version 2>/dev/null | grep -q "${VERILATOR_VERSION#v}"; then
