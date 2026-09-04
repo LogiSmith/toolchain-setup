@@ -1,13 +1,12 @@
 # toolchain-setup
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
 One-shot installer for the **LogiSmith open-source FPGA toolchain** on Ubuntu
-(native or WSL2). It automates the [manual installation guide](https://logismith.github.io/Docs/installation/ubuntu/)
+(native or WSL2) or **Arch Linux**. It automates the [manual installation guide](https://logismith.github.io/Docs/installation/ubuntu/)
 and verifies the result with an end-to-end build.
 
-> Currently **Ubuntu only** and **Xilinx (xc7) only**. This script is a stopgap —
-> the plan is to migrate to Nix, and to generalise beyond Xilinx. See
+> Supports **Ubuntu and Arch Linux**; **Xilinx (xc7) only**. This script is a
+> stopgap — the plan is to migrate to Nix, and to generalise beyond Xilinx. See
 > [DECISIONS.md](DECISIONS.md).
 
 ## What it installs
@@ -35,6 +34,9 @@ cd toolchain-setup
 ./install.sh
 ```
 
+The package-manager step auto-detects `pacman` vs `apt` — no flag needed to pick
+between Ubuntu and Arch.
+
 Or in one line:
 
 ```bash
@@ -49,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/LogiSmith/toolchain-setup/main/inst
 | `--no-board` | Skip only openFPGALoader + udev |
 | `--no-sim` | Skip simulation tools (Verilator + cocotb + forastero) |
 | `--no-test` | Skip the final integration test |
-| `--skip-apt` | Skip the apt steps (deps already present) |
+| `--skip-apt` | Skip the package-manager steps (deps already present) |
 | `-h`, `--help` | Show help |
 
 The installer is **idempotent** — re-running skips anything already installed,
