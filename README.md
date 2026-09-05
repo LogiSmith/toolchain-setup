@@ -73,8 +73,18 @@ tracks its latest release — see [VERSIONS.md](VERSIONS.md).
 [`wsl-setup.ps1`](wsl-setup.ps1) is the Windows-side helper, not a second
 installer: it prepares WSL and then calls `install.sh` inside it.
 
+From a normal (non-admin) PowerShell — one line, no clone needed:
+
 ```powershell
-# normal (non-admin) PowerShell, in the cloned repo
+irm https://raw.githubusercontent.com/LogiSmith/toolchain-setup/main/wsl-setup.ps1 -OutFile "$env:TEMP\wsl-setup.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\wsl-setup.ps1"
+```
+
+Not `irm | iex`: `exit` inside `iex` ends the whole PowerShell session, so a failed
+check would close the window along with the error explaining how to fix it.
+
+Or from a clone:
+
+```powershell
 .\wsl-setup.ps1
 ```
 
