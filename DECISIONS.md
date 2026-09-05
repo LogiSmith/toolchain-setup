@@ -1,7 +1,7 @@
 # Decision log
 
 Lightweight ADRs (Architecture Decision Records) for the toolchain setup.
-Newest first. Each entry: status, context, decision, consequences, follow-up.
+Ordered by ADR number. Each entry: status, context, decision, consequences, follow-up.
 
 ---
 
@@ -85,3 +85,67 @@ In `anvil.py`:
 - Apply the carry patch only for families that need it.
 - Likely folded into the Nix migration (ADR 0001), since per-family environments
   are exactly what `nix develop` shells model well.
+
+---
+
+## ADR 0003 — Windows support is a separate WSL helper, not a branch of `install.sh`
+
+**Status:** Accepted · 2026-09-05
+
+**Context.**
+Most students run Windows. `install.sh` is a Linux script and cannot check
+anything on the Windows side — yet that is where the failures actually happen:
+WSL missing or WSL 1, a WSL/kernel too old to have `vhci-hcd` + `ftdi_sio` (so the
+board can never be attached), a custom kernel from `.wslconfig`, a distro that
+comes up as `root` (which `install.sh` refuses), no `usbipd-win`. Detecting these
+*after* a 30-minute toolchain install is the worst possible time.
+
+**Decision.**
+Ship `wsl-setup.ps1`: a PowerShell **helper**, not a second installer. It creates a
+dedicated distro (default name `anvil`, never overwriting an existing one), verifies
+the kernel modules actually load, and only then hands off to `install.sh` inside the
+distro. `install.sh` stays the single source of truth for what gets installed.
+
+Version handling is deliberately layered, because a version number is a poor proxy
+for "does the board work":
+- **hard floor** (WSL 2.4.4) — below it `wsl --install --name` does not exist, so the
+  script cannot do its job; not waivable;
+- **tested pins** (WSL 2.7.13.0, kernel 6.18.33.2) — stop by default, but `-AllowOlder`
+  drops them to a warning, because Microsoft can ship a good kernel with a *lower*
+  number (an LTS branch) and a stale pin must not block a working setup;
+- **module check** — the authority. It decides, not the numbers.
+
+**Consequences.**
+- Two entry points to keep in sync — but only at the boundary (the handoff to
+  `install.sh`), not in install logic.
+- The version minimums are Windows-side pins that will drift; they live as two
+  constants at the top of the script.
+- Interactive by design (distro name, WSL's own username/password prompt), so it
+  is not usable unattended — acceptable for a one-time setup on a student laptop.
+- Requires a UTF-8 **BOM**: Windows PowerShell 5.1 misreads the script's non-ASCII
+  characters without it.
+- Every command sent into a distro must use `wsl --exec`, never `wsl -- cmd`. The
+  plain form runs the command through the distro's **default shell first**, which
+  expands shell variables it does not know (to nothing) and consumes quoting before
+  the intended command ever sees the text. It fails silently and sometimes appears
+  to work, because that first shell happily performs the pipes and redirections
+  itself. Diagnostic: `wsl -d X -- bash -lc 'echo $BASH_VERSION'` reaches bash
+  already expanded, as a syntax error; with `--exec` it prints the version.
+  Related: Windows PowerShell 5.1 does not escape double quotes when building a
+  native command line, so command strings use single quotes only.
+- `--exec` resolves a bare program name against `/usr/bin` but **not** `/usr/sbin`,
+  even though the running process's own `PATH` contains both. So `modprobe`,
+  `adduser` and `usermod` go through `bash -lc`. The failure reads
+  `execvpe(modprobe) failed: No such file or directory`, which looks like a missing
+  package rather than a lookup problem. `lsmod` masks this nicely: it works only
+  because `/usr/bin/lsmod` exists as a symlink while `/usr/bin/modprobe` does not.
+- Creating the distro with `--no-launch` and invoking its own first-run setup
+  (`[oobe] command` in `/etc/wsl-distribution.conf`) avoids stranding the user in a
+  Linux shell that the script silently waits on. The cost: WSL's *default user* is
+  a separate setting that a normal launch would have set, so the script sets it
+  explicitly with `wsl --manage <distro> --set-default-user`. A distro can
+  otherwise have a valid account and still start as root.
+
+**Follow-up.**
+Same as ADR 0001 — a Nix migration does not remove the Windows-side needs (WSL
+version, kernel modules, usbipd), so this helper survives it.
