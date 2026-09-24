@@ -204,6 +204,8 @@ if [ ! -d "$ANVIL_DIR/.git" ]; then
   git clone "$ANVIL_REPO" "$ANVIL_DIR"
   ok "cloned Anvil"
 fi
+
+git -C "$ANVIL_DIR" config core.fileMode false
 # Resolve the Anvil release to install — always a release tag, never main.
 git -C "$ANVIL_DIR" fetch --tags --force --quiet origin 2>/dev/null || true
 if [ "$ANVIL_VERSION" = "latest" ]; then
@@ -221,7 +223,12 @@ else
   target="$ANVIL_VERSION"
 fi
 [ -n "$target" ] || die "could not resolve an Anvil release tag (API unavailable and no local tags) — refusing to fall back to main"
-git -C "$ANVIL_DIR" checkout --quiet "$target" || die "failed to check out Anvil release '$target'"
+git -C "$ANVIL_DIR" checkout --quiet "$target" || die "failed to check out Anvil release '$target'
+    $ANVIL_DIR has local edits that the checkout would overwrite. Review them:
+      git -C $ANVIL_DIR status
+    then either keep them   (git -C $ANVIL_DIR stash)
+              or discard    (git -C $ANVIL_DIR checkout -- .)
+    and re-run 'anvil update'."
 ok "Anvil at $target ($(git -C "$ANVIL_DIR" rev-parse --short HEAD))"
 require_file "$ANVIL_DIR/anvil.py"
 chmod +x "$ANVIL_DIR/anvil.py"
