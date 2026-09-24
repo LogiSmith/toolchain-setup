@@ -19,7 +19,13 @@ ANVIL_LATEST_API="https://api.github.com/repos/LogiSmith/Anvil/releases/latest"
 
 # SHA256 of the immutable F4PGA downloads (Miniconda is latest-by-design, no pin).
 F4PGA_INSTALL_SHA256="8fa1aa9cfc033c9fef59c2ac19d4ff18568a66bc8ce15c3385cd9ec1d1901274"
-F4PGA_DEVICE_SHA256="49b355e8a442e46652c7b089c23dc020d4babb8009d8f4494e09d72e37b2e5ef"
+# VPR architecture definitions, one tarball per device — "<device>:<sha256>".
+# Must cover every `vpr_device` in Anvil's boards.json:
+#   xc7a100t_test → Nexys A7-100T      xc7a50t_test → Nexys A7-50T
+F4PGA_DEVICES="
+xc7a100t_test:49b355e8a442e46652c7b089c23dc020d4babb8009d8f4494e09d72e37b2e5ef
+xc7a50t_test:819e9d54c918286956201444bf78b482ae94b3202e900c3df593d012c158d74f
+"
 # fix_xc7_carry.py before/after our patch (f4pga pinned → file is deterministic).
 CARRY_PRE_SHA256="3b6ac9ab514a9f56f9f42c1687d01beb4ab07e26aac52e98e11f568b29a443e5"
 CARRY_POST_SHA256="b70beddff4ded4d48a6f3b158650a0d436af81599086afb523b6726f8325ae7b"
@@ -52,7 +58,7 @@ Options:
   --minimal     Skip optional tools (RISC-V, openFPGALoader/board, simulation)
   --no-board    Skip only openFPGALoader + udev (no board programming)
   --no-sim      Skip simulation tools (Verilator + cocotb + forastero)
-  --no-test     Skip the final integration test (scaffold/build/delete a project)
+  --no-test     Skip the final integration test (scaffold/build/delete one project per board)
   --skip-apt    Skip the package-manager steps (assume deps already present)
   -h, --help    Show this help
 
@@ -304,22 +310,22 @@ else
 fi
 
 step "5b. F4PGA architecture definitions (Artix-7)"
-marker="$F4PGA_INSTALL_DIR/$FPGA_FAM/.installed-$F4PGA_HASH"
-# Skip if already installed (our marker, or an existing share/ from a manual install).
-if [ -f "$marker" ] || [ -d "$F4PGA_INSTALL_DIR/$FPGA_FAM/share" ]; then
-  touch "$marker" 2>/dev/null || true
-  skip "arch defs already installed"
+ARCH_BASE_URL="https://storage.googleapis.com/symbiflow-arch-defs/artifacts/prod/foss-fpga-tools/symbiflow-arch-defs/continuous/install/${F4PGA_TIMESTAMP}"
+fam_dir="$F4PGA_INSTALL_DIR/$FPGA_FAM"
+base_marker="$fam_dir/.installed-$F4PGA_HASH"
+
+# The base package (techmaps, scripts, conda reqs); the device arch defs below
+# layer into share/f4pga/arch/ on top of it, so the two are installed separately.
+if [ -f "$base_marker" ] || [ -d "$fam_dir/share" ]; then
+  touch "$base_marker" 2>/dev/null || true
+  skip "base arch defs already installed"
 else
   mkdir -p "$F4PGA_INSTALL_DIR"
-  base="https://storage.googleapis.com/symbiflow-arch-defs/artifacts/prod/foss-fpga-tools/symbiflow-arch-defs/continuous/install/${F4PGA_TIMESTAMP}"
   tmp="$(mktemp -d)"
-  # Download to files (retry + checksum) before extracting, so truncation is caught.
+  # Download to a file (retry + checksum) before extracting, so truncation is caught.
   info "downloading install package..."
-  download "$base/symbiflow-arch-defs-install-${FPGA_FAM}-${F4PGA_HASH}.tar.xz" "$tmp/install.tar.xz"
+  download "$ARCH_BASE_URL/symbiflow-arch-defs-install-${FPGA_FAM}-${F4PGA_HASH}.tar.xz" "$tmp/install.tar.xz"
   verify_sha256 "$tmp/install.tar.xz" "$F4PGA_INSTALL_SHA256"
-  info "downloading xc7a100t device..."
-  download "$base/symbiflow-arch-defs-xc7a100t_test-${F4PGA_HASH}.tar.xz" "$tmp/device.tar.xz"
-  verify_sha256 "$tmp/device.tar.xz" "$F4PGA_DEVICE_SHA256"
   # Extract into a staging dir on the SAME filesystem, then atomically rename into
   # place. A crash mid-extract leaves only staging (cleaned up) — never a partial
   # install that a later run would mistake for complete.
@@ -327,14 +333,47 @@ else
   stage="$F4PGA_INSTALL_DIR/.${FPGA_FAM}-staging"
   rm -rf "$stage"; mkdir -p "$stage"
   tar -xJf "$tmp/install.tar.xz" -C "$stage"
-  tar -xJf "$tmp/device.tar.xz"  -C "$stage"
   rm -rf "$tmp"
-  rm -rf "$F4PGA_INSTALL_DIR/$FPGA_FAM"
-  mv "$stage" "$F4PGA_INSTALL_DIR/$FPGA_FAM"
-  require_file "$F4PGA_INSTALL_DIR/$FPGA_FAM/share"
-  touch "$marker"
-  ok "installed arch defs"
+  rm -rf "$fam_dir"
+  mv "$stage" "$fam_dir"
+  require_file "$fam_dir/share"
+  touch "$base_marker"
+  ok "installed base arch defs"
 fi
+
+# Devices are marked individually, so adding a board to a machine that already
+# has the toolchain downloads only the device that board needs.
+for entry in $F4PGA_DEVICES; do
+  device="${entry%%:*}"
+  dev_sha="${entry#*:}"
+  dev_dir="$fam_dir/share/f4pga/arch/$device"
+  dev_marker="$fam_dir/.installed-$F4PGA_HASH-$device"
+
+  if [ -d "$dev_dir" ]; then
+    # Present from an earlier run (or an installer predating per-device markers).
+    touch "$dev_marker" 2>/dev/null || true
+    skip "device $device already installed"
+    continue
+  fi
+
+  tmp="$(mktemp -d)"
+  info "downloading $device device..."
+  download "$ARCH_BASE_URL/symbiflow-arch-defs-${device}-${F4PGA_HASH}.tar.xz" "$tmp/device.tar.xz"
+  verify_sha256 "$tmp/device.tar.xz" "$dev_sha"
+  info "extracting $device..."
+  stage="$F4PGA_INSTALL_DIR/.${FPGA_FAM}-${device}-staging"
+  rm -rf "$stage"; mkdir -p "$stage"
+  tar -xJf "$tmp/device.tar.xz" -C "$stage"
+  rm -rf "$tmp"
+  [ -d "$stage/share/f4pga/arch/$device" ] \
+    || die "$device tarball did not contain share/f4pga/arch/$device"
+  # Same filesystem as the staging dir, so this rename is atomic.
+  mkdir -p "$fam_dir/share/f4pga/arch"
+  mv "$stage/share/f4pga/arch/$device" "$dev_dir"
+  rm -rf "$stage"
+  touch "$dev_marker"
+  ok "installed device $device"
+done
 
 step "5c. Carry-chain patch"
 # Verify pre-patch hash → patch → verify post-patch hash; refuse an unexpected file.
@@ -478,21 +517,26 @@ if [ "$DO_TEST" -eq 1 ]; then
   TESTDIR="$HOME/opt/_anvil_integration_test"   # global: removed by cleanup() on any exit
   rm -rf "$TESTDIR"; mkdir -p "$TESTDIR"
 
-  echo "  scaffolding + building a test project in $TESTDIR ..."
-  set +e
-  ( cd "$TESTDIR" \
-      && $ANVIL_CMD init --board Nexys-A7-100T --example uart-hello \
-      && $ANVIL_CMD build ) < /dev/null
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || die "integration test FAILED during 'anvil init'/'anvil build'"
+  # One project per board — each exercises a different device's arch defs.
+  for board in Nexys-A7-100T Nexys-A7-50T; do
+    bdir="$TESTDIR/$board"
+    mkdir -p "$bdir"
+    echo "  scaffolding + building $board in $bdir ..."
+    set +e
+    ( cd "$bdir" \
+        && $ANVIL_CMD init --board "$board" --example uart-hello \
+        && $ANVIL_CMD build ) < /dev/null
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] || die "integration test FAILED for $board during 'anvil init'/'anvil build'"
 
-  bit="$(find "$TESTDIR/build" -name '*.bit' 2>/dev/null | head -1)"
-  [ -n "$bit" ] || die "integration test FAILED — no bitstream produced"
-  ok "bitstream produced: ${bit#$TESTDIR/}"
+    bit="$(find "$bdir/build" -name '*.bit' 2>/dev/null | head -1)"
+    [ -n "$bit" ] || die "integration test FAILED for $board — no bitstream produced"
+    ok "$board: bitstream produced: ${bit#$bdir/}"
+  done
 
   rm -rf "$TESTDIR"; TESTDIR=""
-  ok "test project removed"
+  ok "test projects removed"
 else
   skip "integration test (--no-test)"
 fi

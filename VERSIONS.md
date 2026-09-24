@@ -46,6 +46,13 @@ future WSL breaks that, the script refuses to run and prints how to pin WSL back
   Anvil repo. Pin a specific tag by setting `ANVIL_VERSION=vX.Y.Z`.
 - **f4pga-examples** — pinned to a commit (`F4PGA_EXAMPLES_REF` in `install.sh`);
   its `environment.yml` defines the `xc7` conda env, so this fixes the env contents.
+- **F4PGA arch-defs** — one base package plus one tarball per device, listed as
+  `<device>:<sha256>` in `F4PGA_DEVICES`. All come from the single
+  `F4PGA_TIMESTAMP`/`F4PGA_HASH` build, so devices are never mixed across builds.
+  Each device is marked installed separately, so adding a board to Anvil's
+  `boards.json` only downloads the one architecture that board needs. The list
+  must cover every `vpr_device` in `boards.json` — `anvil doctor` reports a
+  mismatch.
 - **Simulation tools** (optional, `--no-sim`) — Verilator built from source
   (`VERILATOR_VERSION`, currently `v5.048`), plus cocotb (`1.9.2`) + forastero in a
   venv at `~/opt/verif`. (cocotb pinned to 1.9.2 because forastero needs cocotb <2.0.)
