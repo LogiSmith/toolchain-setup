@@ -26,7 +26,8 @@
   Prepare/verify WSL only; do not run install.sh.
 
 .PARAMETER SkipDriverCheck
-  Skip the vhci-hcd / ftdi_sio kernel-module check (no board programming).
+  Skip the vhci-hcd / ftdi_sio kernel-module check and the usbipd-win install
+  (no board programming).
 
 .PARAMETER InstallArgs
   Extra flags passed through to install.sh, e.g. '--no-test' or '--minimal'.
@@ -228,6 +229,25 @@ Docs: $DOC_WSL
 }
 Ok 'WSL is installed'
 
+Step '1b. Host tools'
+
+# Reported here rather than only where they are used, so a missing piece is known
+# before the long steps run. Neither is fatal: both only gate the usbipd install.
+if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+  Ok 'winget present'
+} else {
+  Warn 'winget not found -- usbipd-win cannot be installed automatically'
+  Info '  install "App Installer" from the Microsoft Store, then re-run this script'
+}
+
+$me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if ($me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  Ok 'running as Administrator'
+} else {
+  Warn 'not an ADMINISTRATOR PowerShell -- usbipd-win cannot be installed (board programming)'
+  Info '  re-run from an elevated PowerShell if you need to program a board'
+}
+
 # ─── 2. Versions: WSL + kernel ──────────────────────────────────────────────
 Step '2. WSL and kernel versions'
 
@@ -323,12 +343,60 @@ try {
   }
 } catch { Warn 'could not determine free disk space' }
 
-if (-not (Get-Command usbipd.exe -ErrorAction SilentlyContinue)) {
-  Warn 'usbipd-win not found — required to attach the FPGA board (USB) to WSL'
-  Info '  install:  winget install --exact dorssel.usbipd-win'
-  Info "  usage:    usbipd list / usbipd attach --wsl --busid <BUSID>   ($DOC_USB)"
-} else {
+Step '2d. usbipd-win (USB passthrough)'
+
+# The board is invisible inside WSL without this, so it is installed rather than
+# only reported -- the one thing this script installs onto Windows itself.
+function Install-Usbipd {
+  if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+    Warn 'winget is not available -- cannot install usbipd-win automatically'
+    return $false
+  }
+  # usbipd-win ships a driver, so its installer needs an elevated session.
+  $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+  if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Warn 'not an ADMINISTRATOR PowerShell -- cannot install usbipd-win automatically (it installs a driver)'
+    return $false
+  }
+
+  Info 'installing usbipd-win (winget) ...'
+  $prevEap = $ErrorActionPreference
+  try {
+
+    $ErrorActionPreference = 'Continue'
+    & winget.exe install --id dorssel.usbipd-win --exact --accept-package-agreements --accept-source-agreements | Out-Host
+    $rc = $LASTEXITCODE
+  } catch {
+    Warn "winget could not be started: $($_.Exception.Message)"
+    return $false
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
+  $paths = @([Environment]::GetEnvironmentVariable('Path', 'Machine'),
+             [Environment]::GetEnvironmentVariable('Path', 'User')) | Where-Object { $_ }
+  $env:Path = $paths -join ';'
+
+  # Judged on whether usbipd is usable, not on winget's code: one that was already
+  # installed exits non-zero ('no upgrade found') over a perfectly good install.
+  if (Get-Command usbipd.exe -ErrorAction SilentlyContinue) {
+    Ok 'usbipd-win installed'
+    return $true
+  }
+  Warn "winget did not install usbipd-win (exit $rc)"
+  return $false
+}
+
+if (Get-Command usbipd.exe -ErrorAction SilentlyContinue) {
   Ok 'usbipd-win present (USB passthrough to WSL)'
+} else {
+  if ($SkipDriverCheck) {
+    Skip 'usbipd-win install (-SkipDriverCheck)'
+  } elseif (-not (Install-Usbipd)) {
+    Warn 'usbipd-win not installed -- needed to attach the FPGA board (USB) to WSL'
+    Info '  install:  winget install --exact dorssel.usbipd-win'
+  }
+  # Installing it is not enough: the board is attached once per session.
+  Info "  usage:    usbipd list / usbipd attach --wsl --busid <BUSID>   ($DOC_USB)"
 }
 
 # WSL 1 distros cannot run this toolchain; make 2 the default for new installs.
