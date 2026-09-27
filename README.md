@@ -92,11 +92,19 @@ It checks, in order:
 
 1. **WSL present** — Windows build ≥ 19041 and WSL installed; otherwise it prints
    the `wsl --install` instructions (admin + reboot) and stops.
+1b. **Host tools** — reports whether `winget` is present and whether this is an
+   elevated PowerShell. Neither is fatal; together they decide only whether
+   `usbipd-win` can be installed for you in step 2d, and reporting them here means
+   you learn that at the start rather than ten minutes in.
 2. **WSL and kernel versions** — at least **WSL 2.7.13.0** and **kernel 6.18.33.2**
    (the versions shipping `vhci-hcd` + `ftdi_sio`); otherwise it stops and asks for
    `wsl --update`. A `kernel=`/`kernelModules=` line in `%USERPROFILE%\.wslconfig`
    is allowed but reported as a **custom (non-Microsoft) kernel** — commented-out
-   lines are ignored. Also warns on low disk space and missing `usbipd-win`.
+   lines are ignored. Also warns on low disk space.
+2d. **usbipd-win** — installs it with `winget` if it is missing, since without it
+   the board is invisible inside WSL. Skipped by `-SkipDriverCheck`, and never
+   fatal: no `winget`, no elevation, or any winget failure prints the manual
+   command and carries on. Nothing is ever attached automatically.
 3. **Distro name** — default `anvil`; if it already exists you can reuse it or pick
    another name. Nothing is ever deleted.
 4. **Create the distro** — `wsl --install --name <name> --no-launch`, then runs the
@@ -135,7 +143,7 @@ It checks, in order:
 | `-Image <image>` | Image from `wsl --list --online` (default `Ubuntu-24.04`) |
 | `-Reuse` | Reuse the distro if it exists, without asking |
 | `-SkipAnvil` | Prepare/verify WSL only; don't run `install.sh` |
-| `-SkipDriverCheck` | Skip the `vhci-hcd`/`ftdi_sio` check (no board programming) |
+| `-SkipDriverCheck` | Skip the `vhci-hcd`/`ftdi_sio` check and the `usbipd-win` install (no board programming) |
 | `-AllowOlder` | Accept a WSL/kernel older than the tested pins (warn instead of stop) |
 | `-InstallArgs '<flags>'` | Flags passed through to `install.sh`, e.g. `'--no-test'` |
 
@@ -174,15 +182,22 @@ wsl --version                                 # confirm 2.7.13.0
 (`winget show --id Microsoft.WSL --exact --versions` lists what is available;
 the installers are also at <https://github.com/microsoft/WSL/releases>.)
 
-To program a board from WSL you also need [usbipd-win](https://learn.microsoft.com/windows/wsl/connect-usb)
-on the Windows side (`winget install --exact dorssel.usbipd-win`), then
-`usbipd attach --wsl --busid <BUSID>` once per session.
-
 If PowerShell blocks the script (execution policy), run it as:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\wsl-setup.ps1
 ```
+
+### Next: getting the board into WSL
+
+Once the toolchain is in and `anvil doctor` is green, one step is left.
+`usbipd-win` is installed for you in step 2d, but WSL 2 is a virtual machine with
+no USB ports of its own, so the board still has to be *attached* to it — once per
+session, after every reboot or replug. Until you do that a missing board is the
+expected state, not a symptom.
+
+Three ways to do it — a VS Code button, a small GUI, or two commands — are in
+**[USB forwarding](https://logismith.github.io/Docs/installation/usb-forwarding/)**.
 
 ## Updating
 
