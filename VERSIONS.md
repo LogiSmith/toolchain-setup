@@ -54,7 +54,7 @@ future WSL breaks that, the script refuses to run and prints how to pin WSL back
   must cover every `vpr_device` in `boards.json` — `anvil doctor` reports a
   mismatch.
 - **Simulation tools** (optional, `--no-sim`) — Verilator built from source
-  (`VERILATOR_VERSION`, currently `v5.048`), plus cocotb (`1.9.2`) + forastero in a
-  venv at `~/opt/verif`. (cocotb pinned to 1.9.2 because forastero needs cocotb <2.0.)
+  (`VERILATOR_VERSION`, currently `v5.048`), plus cocotb (`COCOTB_SPEC`, currently
+  `>=2.0,<3`) in a venv at `~/opt/verif`.
 - A row is only added once the combination has passed the installer's end-to-end
   integration test on the listed platform.

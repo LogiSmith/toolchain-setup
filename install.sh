@@ -32,8 +32,7 @@ CARRY_POST_SHA256="b70beddff4ded4d48a6f3b158650a0d436af81599086afb523b6726f8325a
 
 # Simulation / verification tools (separate from the F4PGA synth flow).
 VERILATOR_VERSION="v5.048"             # latest stable tag (5.049 is devel-only, untagged)
-COCOTB_VERSION="1.9.2"                 # forastero requires cocotb <2.0; 1.9.2 is the match
-FORASTERO_SPEC="forastero"             # latest compatible; append ==x.y.z to pin
+COCOTB_SPEC=">=2.0,<3"                 # cocotb 2.x; tighten to ==x.y.z to pin
 
 # ─── Paths (must match anvil.py) ────────────────────────────────────────────
 ANVIL_DIR="$HOME/opt/anvil"
@@ -43,7 +42,7 @@ CONDA_SH="$CONDA_DIR/etc/profile.d/conda.sh"
 F4PGA_INSTALL_DIR="$HOME/opt/f4pga"
 F4PGA_EXAMPLES="$HOME/f4pga-examples"
 FPGA_FAM="xc7"
-VERIF_VENV="$HOME/opt/verif"           # Python venv for cocotb + forastero
+VERIF_VENV="$HOME/opt/verif"           # Python venv for cocotb
 
 # ─── Options ────────────────────────────────────────────────────────────────
 DO_RISCV=1; DO_BOARD=1; DO_TEST=1; DO_APT=1; DO_SIM=1
@@ -57,7 +56,7 @@ Usage: ./install.sh [options]
 Options:
   --minimal     Skip optional tools (RISC-V, openFPGALoader/board, simulation)
   --no-board    Skip only openFPGALoader + udev (no board programming)
-  --no-sim      Skip simulation tools (Verilator + cocotb + forastero)
+  --no-sim      Skip simulation tools (Verilator + cocotb)
   --no-test     Skip the final integration test (scaffold/build/delete one project per board)
   --skip-apt    Skip the package-manager steps (assume deps already present)
   -h, --help    Show this help
@@ -476,7 +475,7 @@ else
 fi
 
 # ─── 8. Simulation tools (optional) ─────────────────────────────────────────
-step "8. Simulation tools (Verilator + cocotb + forastero)"
+step "8. Simulation tools (Verilator + cocotb)"
 if [ "$DO_SIM" -eq 1 ]; then
   if [ "$DO_APT" -eq 1 ]; then
     if command -v pacman >/dev/null 2>&1; then
@@ -500,14 +499,16 @@ if [ "$DO_SIM" -eq 1 ]; then
     require_cmd verilator
     ok "installed $(verilator --version)"
   fi
-  # cocotb + forastero together in a dedicated venv (needs Python ≥3.8; the xc7
-  # conda env is 3.7, so these stay separate from the F4PGA flow).
+  # cocotb in a dedicated venv (needs Python ≥3.8; the xc7 conda env is 3.7,
+  # so this stays separate from the F4PGA flow).
   [ -x "$VERIF_VENV/bin/python" ] || python3 -m venv "$VERIF_VENV"
   "$VERIF_VENV/bin/pip" install --quiet --upgrade pip
-  "$VERIF_VENV/bin/pip" install --quiet "cocotb==${COCOTB_VERSION}" "$FORASTERO_SPEC"
+  # Drop forastero from venvs created by older versions of this script (needs cocotb <2.0).
+  "$VERIF_VENV/bin/pip" uninstall --quiet -y forastero 2>/dev/null || true
+  "$VERIF_VENV/bin/pip" install --quiet --upgrade "cocotb${COCOTB_SPEC}"
   "$VERIF_VENV/bin/python" -c "import cocotb" || die "cocotb import failed in $VERIF_VENV"
-  "$VERIF_VENV/bin/pip" show forastero >/dev/null 2>&1 || die "forastero not installed in $VERIF_VENV"
-  ok "cocotb ${COCOTB_VERSION} + forastero in $VERIF_VENV (use: source $VERIF_VENV/bin/activate)"
+  cocotb_ver="$("$VERIF_VENV/bin/python" -c 'import cocotb; print(cocotb.__version__)')"
+  ok "cocotb ${cocotb_ver} in $VERIF_VENV (use: source $VERIF_VENV/bin/activate)"
 else
   skip "simulation tools (--no-sim / --minimal)"
 fi
